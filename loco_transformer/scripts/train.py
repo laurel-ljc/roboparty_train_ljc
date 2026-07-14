@@ -133,7 +133,7 @@ from isaaclab.utils.io import dump_yaml
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
 import loco_transformer  # noqa: F401
 
@@ -230,9 +230,14 @@ def _resolve_log_dir(
     return log_dir, resume_path
 
 
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
+def main():
     """Train with RSL-RL agent."""
+    # load configurations from gym registry
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg = load_cfg_from_registry(
+        args_cli.task, "env_cfg_entry_point"
+    )
+    agent_cfg: RslRlBaseRunnerCfg = load_cfg_from_registry(args_cli.task, args_cli.agent)
+
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs

@@ -109,7 +109,7 @@ from isaaclab.markers import VisualizationMarkers
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
 import loco_transformer  # noqa: F401
 
@@ -248,11 +248,16 @@ def visualize_attention(map_scan, root_pose, output_attn, visualizer):
         attention_indices[color_mask] = i
     visualizer.visualize(translations=map_scan_world.view(-1, 3), marker_indices=attention_indices)
 
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
+def main():
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
     train_task_name = task_name.replace("-Play", "")
+
+    # load configurations from gym registry
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg = load_cfg_from_registry(
+        args_cli.task, "env_cfg_entry_point"
+    )
+    agent_cfg: RslRlBaseRunnerCfg = load_cfg_from_registry(args_cli.task, args_cli.agent)
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
