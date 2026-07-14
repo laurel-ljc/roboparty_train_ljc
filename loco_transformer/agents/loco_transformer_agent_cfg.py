@@ -29,9 +29,7 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 500
     experiment_name = "loco_transformer"
     run_name = ""
-    logger = "wandb"
-    neptune_project = "robolab"
-    wandb_project = "loco_transformer"
+    logger = "tensorboard"
     resume = False
     load_run = ".*"
     load_checkpoint = "model_.*.pt"
@@ -41,7 +39,7 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
 
     # 3-layer MLP policy: 256 → 128 → 64
     policy = RslRlPpoActorCriticCfg(
-        class_name="ActorCritic",
+        class_name="rsl_rl.modules:ActorCritic",
         init_noise_std=1.0,
         noise_std_type="scalar",
         actor_hidden_dims=[256, 128, 64],
@@ -50,7 +48,7 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
     )
 
     algorithm = RslRlPpoAlgorithmCfg(
-        class_name="PPO",
+        class_name="rsl_rl.algorithms:PPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
