@@ -20,6 +20,9 @@ from .observations import (
     projected_gravity,
 )
 
+# -- Isaac Lab built-in observation functions --
+from isaaclab.envs.mdp.observations import height_scan  # noqa: F401
+
 # -- Custom reward functions --
 from .rewards import (
     action_rate_l2,

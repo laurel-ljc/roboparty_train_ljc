@@ -6,4 +6,8 @@
 
 """Agent configurations for the loco_transformer task."""
 
-from .loco_transformer_agent_cfg import LocoTransformerAgentCfg
+from .loco_transformer_agent_cfg import (
+    CrossAttentionActorCriticCfg,
+    LocoTransformerAgentCfg,
+    LocoTransformerMLPAgentCfg,
+)
