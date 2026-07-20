@@ -27,7 +27,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
@@ -76,6 +76,16 @@ class SceneCfg(InteractiveSceneCfg):
         track_air_time=True,
     )
 
+    # height scanner — 与 robolab parkour 一致: torso_link 上方 5m，2.0×1.0 m 网格，resolution 0.1 m
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 5.0)),
+        ray_alignment="yaw",
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=(2.0, 1.0)),
+        debug_vis=False,
+        mesh_prim_paths=["/World/ground"],
+    )
+
     # dome light
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
@@ -93,20 +103,27 @@ class SceneCfg(InteractiveSceneCfg):
 
 @configclass
 class ObservationsCfg:
-    """Observation specifications for the MDP."""
+    """Observation specifications for the MDP.
+
+    Two observation groups:
+    - policy: observations with noise (for actor training)
+    - critic: observations without noise (for value estimation)
+
+    Height scan from raycaster on torso_link (21×11 = 231 rays, GridPatternCfg 0.1 m resolution).
+    """
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Observations for the policy group.
+        """Observations for the policy group (with noise).
 
-        Following the direct/base pattern:
         - base_ang_vel (3)
         - projected_gravity (3)
         - velocity_commands (3)
         - joint_pos (23)
         - joint_vel (23)
         - last_action (23)
-        Total: 78 dims
+        - height_scan (231)  ← raycaster
+        Total: 309 dims
         """
 
         base_ang_vel = ObsTerm(
@@ -131,13 +148,62 @@ class ObservationsCfg:
             noise=Unoise(n_min=-1.5, n_max=1.5),
         )
         actions = ObsTerm(func=mdp.last_action)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.5},
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+            clip=(-5.0, 5.0),
+        )
 
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
 
+    @configclass
+    class CriticCfg(ObsGroup):
+        """Observations for the critic group (without noise).
+
+        Same structure as PolicyCfg but without observation noise.
+        - base_ang_vel (3)
+        - projected_gravity (3)
+        - velocity_commands (3)
+        - joint_pos (23)
+        - joint_vel (23)
+        - last_action (23)
+        - height_scan (231)  ← raycaster, no noise
+        Total: 309 dims
+        """
+
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel,
+            scale=0.25,
+        )
+        projected_gravity = ObsTerm(
+            func=mdp.projected_gravity,
+        )
+        velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity"},
+        )
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+        )
+        actions = ObsTerm(func=mdp.last_action)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.5},
+            clip=(-5.0, 5.0),
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
     policy: PolicyCfg = PolicyCfg()
-    critic: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -401,3 +467,5 @@ class LocoTransformerEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+        if self.scene.height_scanner is not None:
+            self.scene.height_scanner.update_period = self.sim.dt
