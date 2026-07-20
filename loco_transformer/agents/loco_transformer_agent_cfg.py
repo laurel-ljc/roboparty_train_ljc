@@ -42,8 +42,8 @@ class CrossAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     proprioceptive input.
     """
 
-    class_name: str = "CrossAttentionActorCritic"
-    """Module class name, resolved from rsl_rl.modules."""
+    class_name: str = "rsl_rl.modules.actor_critic_cross_attn:CrossAttentionActorCritic"
+    """Module class name with explicit module path for resolve_callable."""
 
     init_noise_std: float = 1.0
     actor_obs_normalization: bool = False
@@ -121,7 +121,7 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
 
     # Cross-attention actor-critic module
     policy = CrossAttentionActorCriticCfg(
-        class_name="CrossAttentionActorCritic",
+        class_name="rsl_rl.modules.actor_critic_cross_attn:CrossAttentionActorCritic",
         actor_perception_range=(78, 309),
         critic_perception_range=(78, 309),
         height_map_shape=(11, 21),
