@@ -144,7 +144,7 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
 
     # PPO algorithm
     algorithm = RslRlPpoAlgorithmCfg(
-        class_name="PPO",
+        class_name="rsl_rl.algorithms.ppo:PPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
@@ -199,7 +199,7 @@ class LocoTransformerMLPAgentCfg(RslRlOnPolicyRunnerCfg):
     )
 
     algorithm = RslRlPpoAlgorithmCfg(
-        class_name="PPO",
+        class_name="rsl_rl.algorithms.ppo:PPO",
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
