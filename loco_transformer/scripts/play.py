@@ -43,8 +43,8 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser = argparse.ArgumentParser(description="Play and export a Loco-Transformer policy with RSL-RL.")
+parser.add_argument("--task", type=str, default="RPO-Loco-Transformer-Play", help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
@@ -58,6 +58,8 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument("--lin-vel-step", type=float, default=0.05, help="Keyboard linear-velocity increment.")
+parser.add_argument("--ang-vel-step", type=float, default=0.05, help="Keyboard angular-velocity increment.")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -87,6 +89,7 @@ installed_version = metadata.version("rsl-rl-lib")
 
 import gymnasium as gym
 import os
+import re
 import time
 import torch
 import copy
@@ -104,155 +107,70 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
-from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab.markers import VisualizationMarkers
-
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
 import loco_transformer  # noqa: F401
 
-class TorchAttnEncPolicyExporter(torch.nn.Module):
-    """Exporter of actor-critic into JIT file."""
+
+def get_play_checkpoint_path(log_path: str, run_pattern: str, checkpoint_pattern: str) -> str:
+    """Find the newest checkpoint while skipping run directories without models."""
+    if not os.path.isdir(log_path):
+        raise ValueError(f"Experiment directory does not exist: {log_path}")
+    runs = [entry.path for entry in os.scandir(log_path) if entry.is_dir() and re.match(run_pattern, entry.name)]
+    for run_path in sorted(runs, key=os.path.getmtime, reverse=True):
+        checkpoints = [name for name in os.listdir(run_path) if re.match(checkpoint_pattern, name)]
+        if checkpoints:
+            checkpoints.sort(key=lambda name: f"{name:0>15}")
+            return os.path.join(run_path, checkpoints[-1])
+    raise ValueError(
+        f"No checkpoint in '{log_path}' matched run '{run_pattern}' and model '{checkpoint_pattern}'."
+    )
+
+
+class CrossAttentionPolicyExporter(torch.nn.Module):
+    """Flattened-tensor inference wrapper for ``CrossAttentionActorCritic``."""
 
     def __init__(self, policy, normalizer=None):
         super().__init__()
-        # copy policy parameters
         self.actor = copy.deepcopy(policy.actor)
         self.encoder = copy.deepcopy(policy.encoder)
+        self.normalizer = copy.deepcopy(normalizer) if normalizer is not None else torch.nn.Identity()
         self.num_actor_obs = policy.num_actor_obs
-        self.enable_critic_estimation = policy.enable_critic_estimation
-        self.enable_obs_encoder = policy.enable_obs_encoder
-        self.single_actor_obs_dim = policy.single_actor_obs_dim
-        if self.enable_critic_estimation:
-            self.estimator = copy.deepcopy(policy.estimator)
-        if self.enable_obs_encoder:
-            self.actor_obs_encoder = copy.deepcopy(policy.actor_obs_encoder)
-        # copy normalizer if exists
-        if normalizer:
-            self.normalizer = copy.deepcopy(normalizer)
-        else:
-            self.normalizer = torch.nn.Identity()
+        self.perception_start, self.perception_end = policy.actor_perception_range
+        self.height_map_shape = policy.height_map_shape
 
-    def forward(self, x):
-        prop_obs = self.normalizer(x[:, :self.num_actor_obs])
-        perception_obs = x[:, self.num_actor_obs:]
-        if self.enable_obs_encoder:
-            esti_obs = self.actor_obs_encoder(prop_obs)
-            enc_obs = torch.cat([prop_obs[:, -self.single_actor_obs_dim:], esti_obs], dim=-1)
-        else:
-            esti_obs = prop_obs
-            enc_obs = prop_obs[:, -self.single_actor_obs_dim:]
-        if self.enable_critic_estimation:
-            critic_pred = self.estimator(esti_obs)
-            enc_obs = torch.cat([enc_obs, critic_pred], dim=-1)
-        embedding, *_ = self.encoder(enc_obs, perception_obs)
-        if self.enable_critic_estimation or self.enable_obs_encoder:
-            obs = torch.cat([enc_obs, embedding], dim=-1)
-        else:
-            obs = torch.cat([prop_obs, embedding], dim=-1)
-        return self.actor(obs)
-
-    @torch.jit.export
-    def reset(self):
-        pass
-
-    def reset_memory(self):
-        self.hidden_state[:] = 0.0
-        if hasattr(self, "cell_state"):
-            self.cell_state[:] = 0.0
-
-    def export(self, path, filename):
-        os.makedirs(path, exist_ok=True)
-        path = os.path.join(path, filename)
-        self.to("cpu")
-        traced_script_module = torch.jit.script(self)
-        traced_script_module.save(path)
-
-
-class OnnxAttnEncPolicyExporter(torch.nn.Module):
-    """Exporter of actor-critic into ONNX file."""
-
-    def __init__(self, policy, normalizer=None, verbose=False):
-        super().__init__()
-        self.verbose = verbose
-        # copy policy parameters
-        self.actor = copy.deepcopy(policy.actor)
-        self.encoder = copy.deepcopy(policy.encoder)
-        self.num_actor_obs = policy.num_actor_obs
-        self.enable_critic_estimation = policy.enable_critic_estimation
-        self.enable_obs_encoder = policy.enable_obs_encoder
-        self.single_actor_obs_dim = policy.single_actor_obs_dim
-        self.map_size = policy.map_size
-        if self.enable_critic_estimation:
-            self.estimator = copy.deepcopy(policy.estimator)
-        if self.enable_obs_encoder:
-            self.actor_obs_encoder = copy.deepcopy(policy.actor_obs_encoder)
-        # copy normalizer if exists
-        if normalizer:
-            self.normalizer = copy.deepcopy(normalizer)
-        else:
-            self.normalizer = torch.nn.Identity()
-
-    def forward(self, x):
-        prop_obs = self.normalizer(x[:, :self.num_actor_obs])
-        perception_obs = x[:, self.num_actor_obs:]
-        if self.enable_obs_encoder:
-            esti_obs = self.actor_obs_encoder(prop_obs)
-            enc_obs = torch.cat([prop_obs[:, -self.single_actor_obs_dim:], esti_obs], dim=-1)
-        else:
-            esti_obs = prop_obs
-            enc_obs = prop_obs[:, -self.single_actor_obs_dim:]
-        if self.enable_critic_estimation:
-            critic_pred = self.estimator(esti_obs)
-            enc_obs = torch.cat([enc_obs, critic_pred], dim=-1)
-        embedding, *_ = self.encoder(enc_obs, perception_obs)
-        if self.enable_critic_estimation or self.enable_obs_encoder:
-            obs = torch.cat([enc_obs, embedding], dim=-1)
-        else:
-            obs = torch.cat([prop_obs, embedding], dim=-1)
-        return self.actor(obs)
-
-    def export(self, path, filename):
-        self.to("cpu")
-        self.eval()
-        opset_version = 18  # was 11, but it caused problems with linux-aarch, and 18 worked well across all systems.
-        obs = torch.zeros(1, self.num_actor_obs + self.map_size[0]*self.map_size[1])
-        torch.onnx.export(
-            self,
-            obs,
-            os.path.join(path, filename),
-            export_params=True,
-            opset_version=opset_version,
-            verbose=self.verbose,
-            input_names=["obs"],
-            output_names=["actions"],
-            dynamic_axes={},
+    def forward(self, obs):
+        obs = self.normalizer(obs)
+        proprio = torch.cat(
+            (obs[:, : self.perception_start], obs[:, self.perception_end :]), dim=-1
         )
+        height_map = obs[:, self.perception_start : self.perception_end].reshape(
+            -1, self.height_map_shape[0], self.height_map_shape[1]
+        )
+        embedding, _ = self.encoder(proprio, height_map)
+        return self.actor(torch.cat((proprio, embedding), dim=-1))
 
-def visualize_attention(map_scan, root_pose, output_attn, visualizer):
-    root_pos = root_pose[:, :3]  # shape (B, 3)
-    map_scan_world = -map_scan + root_pos.unsqueeze(1).unsqueeze(1)  # shape (B, W, L, 3)
-    B = root_pos.shape[0]
+    def export(self, path):
+        os.makedirs(path, exist_ok=True)
+        self.to("cpu").eval()
+        example = torch.zeros(1, self.num_actor_obs)
+        with torch.inference_mode():
+            traced = torch.jit.trace(self, example, strict=False)
+            traced.save(os.path.join(path, "policy.pt"))
+            torch.onnx.export(
+                self,
+                example,
+                os.path.join(path, "policy.onnx"),
+                export_params=True,
+                opset_version=18,
+                input_names=["obs"],
+                output_names=["actions"],
+                dynamic_axes={"obs": {0: "batch"}, "actions": {0: "batch"}},
+            )
 
-    max_attn_per_env, _ = torch.max(output_attn.view(B, -1), dim=1)
-    max_attn_per_env[max_attn_per_env == 0] = 1.0
-    normalized_attn = output_attn / max_attn_per_env.view(B, 1, 1)
-    normalized_attn = normalized_attn.view(-1)
-    # print(normalized_attn)
-    attention_indices = torch.zeros_like(normalized_attn, dtype=torch.int)
-    for i in range(10):
-        color_mask = (normalized_attn > 0.1 * i)
-        color_mask = torch.bitwise_and(color_mask, normalized_attn < 0.1 * (i + 1))
-        attention_indices[color_mask] = i
-    visualizer.visualize(translations=map_scan_world.view(-1, 3), marker_indices=attention_indices)
 
 def main():
-    # grab task name for checkpoint path
-    task_name = args_cli.task.split(":")[-1]
-    train_task_name = task_name.replace("-Play", "")
-
     # load configurations from gym registry
     env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg = load_cfg_from_registry(
         args_cli.task, "env_cfg_entry_point"
@@ -275,12 +193,23 @@ def main():
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    env_cfg.noise.add_noise = False
-    if not args_cli.push_robot:
+    # The Loco-Transformer task is manager-based.  Configure the nested
+    # observation/command terms instead of the direct-environment attributes
+    # used by RoboLab's original play script.
+    if hasattr(env_cfg.observations, "policy"):
+        env_cfg.observations.policy.enable_corruption = False
+    if not args_cli.push_robot and hasattr(env_cfg.events, "push_robot"):
         env_cfg.events.push_robot = None
     env_cfg.episode_length_s = 40.0
-    env_cfg.commands.heading_command=False
-    env_cfg.commands.rel_standing_envs = 0.0
+    command_cfg = env_cfg.commands.base_velocity
+    command_cfg.heading_command = False
+    command_cfg.rel_heading_envs = 0.0
+    command_cfg.rel_standing_envs = 0.0
+    # Prevent periodic random command resampling from overwriting keyboard input.
+    command_cfg.resampling_time_range = (1.0e9, 1.0e9)
+    command_cfg.ranges.lin_vel_x = (0.0, 0.0)
+    command_cfg.ranges.lin_vel_y = (0.0, 0.0)
+    command_cfg.ranges.ang_vel_z = (0.0, 0.0)
 
     if args_cli.plane:
         env_cfg.scene.terrain.terrain_generator = None
@@ -292,12 +221,6 @@ def main():
         env_cfg.scene.terrain.terrain_generator.curriculum = False
         env_cfg.scene.terrain.terrain_generator.difficulty_range = (1.0, 1.0)
 
-    if hasattr(env_cfg, "attn_enc"):
-        visualizer = VisualizationMarkers(env_cfg.attn_enc.marker_cfg)
-
-    if hasattr(env_cfg, 'interrupt') and env_cfg.interrupt.use_interrupt:
-        env_cfg.interrupt.interrupt_ratio = 1.0
-
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
@@ -305,7 +228,7 @@ def main():
     if args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = get_play_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     log_dir = os.path.dirname(resume_path)
 
@@ -315,12 +238,8 @@ def main():
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    env.unwrapped.command_generator.command[:, 0] = 0.0
-    env.unwrapped.command_generator.command[:, 1] = 0.0
-    env.unwrapped.command_generator.command[:, 2] = 0.0
-
-    if hasattr(env_cfg, 'interrupt') and env_cfg.interrupt.use_interrupt:
-        env.unwrapped.interrupt_rad_curriculum = torch.ones(env_cfg.scene.num_envs, dtype=torch.float, device=env.unwrapped.device, requires_grad=False)
+    command = env.unwrapped.command_manager.get_command("base_velocity")
+    command[:, :3] = 0.0
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -334,7 +253,7 @@ def main():
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
-        print("[INFO] Recording videos during training.")
+        print("[INFO] Recording video during playback.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
@@ -374,20 +293,23 @@ def main():
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
     if not os.path.exists(export_model_dir):
         os.makedirs(export_model_dir, exist_ok=True)
-    if hasattr(env_cfg, "attn_enc"):
-        torch_policy_exporter = TorchAttnEncPolicyExporter(policy_nn, normalizer)
-        torch_policy_exporter.export(path=export_model_dir, filename="policy.pt")
-        onnx_policy_exporter = OnnxAttnEncPolicyExporter(policy_nn, normalizer, verbose=False)
-        onnx_policy_exporter.export(path=export_model_dir, filename="policy.onnx")
+    if all(hasattr(policy_nn, name) for name in ("encoder", "actor_perception_range", "height_map_shape")):
+        CrossAttentionPolicyExporter(policy_nn, normalizer).export(export_model_dir)
     else:
         export_policy_as_jit(policy_nn, normalizer, path=export_model_dir, filename="policy.pt")
         export_policy_as_onnx(
             policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx"
         )
+    print(f"[INFO] Exported policy files to: {export_model_dir}")
 
     if not args_cli.headless:
-        from robolab.utils.keyboard import Keyboard
-        keyboard = Keyboard(env)  # noqa:F841
+        from loco_transformer.utils import VelocityCommandKeyboard
+
+        keyboard = VelocityCommandKeyboard(
+            env,
+            lin_vel_step=args_cli.lin_vel_step,
+            ang_vel_step=args_cli.ang_vel_step,
+        )  # keep a strong reference for the lifetime of the play loop
 
     dt = env.unwrapped.step_dt
 
@@ -399,25 +321,9 @@ def main():
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
-            if hasattr(env_cfg, "attn_enc"):
-                actions, output_attn = policy(obs, return_attention=True)
-                height_scan = (
-                    env.unwrapped.height_scanner.data.pos_w[:, :3].unsqueeze(1) - env.unwrapped.height_scanner.data.ray_hits_w[..., :3]
-                )
-                grid_size = env.unwrapped.height_scanner.cfg.pattern_cfg.size  # [L,W] (m)
-                resolution = env.unwrapped.height_scanner.cfg.pattern_cfg.resolution
-                grid_shape = (int(grid_size[0] / resolution) + 1, int(grid_size[1] / resolution) + 1)
-                L = grid_shape[0]
-                W = grid_shape[1]
-                B = height_scan.shape[0]
-                height_scan = height_scan.view(B, W, L, 3)
-                height_scan[..., 2] = torch.clamp(height_scan[..., 2], min=-1.0+env.unwrapped.cfg.normalization.height_scan_offset, max=1.0+env.unwrapped.cfg.normalization.height_scan_offset)
-                height_scan[..., :2] = torch.nan_to_num(height_scan[..., :2], nan=0.0, posinf=0.0, neginf=-0.0)
-                height_scan[..., 2] = torch.nan_to_num(height_scan[..., 2], nan=1.0+env.unwrapped.cfg.normalization.height_scan_offset, posinf=1.0+env.unwrapped.cfg.normalization.height_scan_offset, neginf=-1.0+env.cfg.normalization.height_scan_offset)
-                root_pose = env.unwrapped.robot.data.root_pos_w
-                visualize_attention(height_scan, root_pose, output_attn, visualizer)
-            else:
-                actions = policy(obs)
+            if not args_cli.headless:
+                keyboard.advance()
+            actions = policy(obs)
             obs, _, _, _ = env.step(actions)
         if args_cli.video:
             timestep += 1
