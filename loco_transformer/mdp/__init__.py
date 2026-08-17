@@ -23,7 +23,7 @@ from .observations import (
 # -- Isaac Lab built-in observation functions --
 from isaaclab.envs.mdp.observations import height_scan  # noqa: F401
 
-# -- Custom reward functions (28 terms, 1:1 from RPO-Flat) --
+# -- Custom reward functions (29 terms, 1:1 from RPO-Flat) --
 from .rewards import (
     # task / tracking
     track_lin_vel_xy_yaw_frame_exp,

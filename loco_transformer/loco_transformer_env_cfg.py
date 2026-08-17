@@ -7,7 +7,7 @@
 """Environment configuration for the loco_transformer task.
 
 Based on the RPO-Flat reward and terrain design:
-- 28-term reward function (1:1 port from RPO-Flat)
+- 29-term reward function (1:1 port from RPO-Flat)
 - Procedural gravel terrain (70% flat + 30% random rough, matching GRAVEL_TERRAINS_CFG)
 - Additional feet scanners for feet_height reward
 """
@@ -118,7 +118,7 @@ class SceneCfg(InteractiveSceneCfg):
         offset=RayCasterCfg.OffsetCfg(pos=(0.025, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.12, 0.04]),
-        debug_vis=True,
+        debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
     right_feet_scanner = RayCasterCfg(
@@ -126,7 +126,7 @@ class SceneCfg(InteractiveSceneCfg):
         offset=RayCasterCfg.OffsetCfg(pos=(0.025, 0.0, 20.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.01, size=[0.12, 0.04]),
-        debug_vis=True,
+        debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
 
@@ -271,7 +271,7 @@ class CommandsCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms — 1:1 port from RPO-Flat (28 terms)."""
+    """Reward terms — 1:1 port from RPO-Flat (29 terms)."""
 
     # -- task rewards: velocity tracking --
     track_lin_vel_xy_exp = RewTerm(
@@ -300,16 +300,7 @@ class RewardsCfg:
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
-                body_names=[
-                    "torso_link",
-                    ".*_thigh_yaw_link",
-                    ".*_thigh_roll_link",
-                    ".*_arm_pitch_link",
-                    ".*_arm_roll_link",
-                    ".*_arm_yaw_link",
-                    ".*_elbow_pitch_link",
-                    ".*_elbow_yaw_link",
-                ],
+                body_names="(?!.*ankle_roll.*).*",
             ),
         },
     )
@@ -502,17 +493,6 @@ class TerminationsCfg:
         },
     )
 
-    bad_orientation = DoneTerm(
-        func=mdp.bad_orientation,
-        params={"limit_angle": math.radians(60.0)},
-    )
-
-    root_height = DoneTerm(
-        func=mdp.root_height_below_minimum,
-        params={"minimum_height": 0.3},
-    )
-
-
 @configclass
 class EventCfg:
     """Configuration for domain randomization events.
@@ -680,9 +660,10 @@ class LocoTransformerEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
+        sensor_update_period = self.decimation * self.sim.dt
         if self.scene.height_scanner is not None:
-            self.scene.height_scanner.update_period = self.sim.dt
+            self.scene.height_scanner.update_period = sensor_update_period
         if self.scene.left_feet_scanner is not None:
-            self.scene.left_feet_scanner.update_period = self.sim.dt
+            self.scene.left_feet_scanner.update_period = sensor_update_period
         if self.scene.right_feet_scanner is not None:
-            self.scene.right_feet_scanner.update_period = self.sim.dt
+            self.scene.right_feet_scanner.update_period = sensor_update_period

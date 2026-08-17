@@ -6,7 +6,7 @@
 
 """Reward functions for the loco_transformer task.
 
-Port of the 28-term RPO-Flat reward set, adapted to ManagerBasedRLEnv API.
+Port of the 29-term RPO-Flat reward set, adapted to ManagerBasedRLEnv API.
 
 Key API changes from RPO-Flat's DirectRLEnv:
 - ``env.command_generator.command`` → ``env.command_manager.get_command(command_name)``
@@ -29,6 +29,8 @@ import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor, RayCaster
+
+from .reward_math import joint_pos_limit_violation
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -398,9 +400,9 @@ def joint_pos_limits(
 ) -> torch.Tensor:
     """Penalize joint positions that exceed soft limits."""
     asset: Articulation = env.scene[asset_cfg.name]
-    out_of_limits = -(
-        torch.clamp(asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 0], max=0.0)
-        + torch.clamp(asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 1], min=0.0)
+    out_of_limits = joint_pos_limit_violation(
+        asset.data.joint_pos[:, asset_cfg.joint_ids],
+        asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids],
     )
     return torch.sum(out_of_limits, dim=1)
 

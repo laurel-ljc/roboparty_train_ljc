@@ -177,7 +177,7 @@ class LocoTransformerMLPAgentCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 9001
     save_interval = 500
-    experiment_name = "loco_transformer"
+    experiment_name = "loco_transformer_mlp"
     run_name = ""
     logger = "tensorboard"
     resume = False
