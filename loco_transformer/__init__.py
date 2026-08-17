@@ -4,7 +4,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Loco-Transformer task — a minimal ManagerBasedRLEnv for locomotion."""
+"""Loco-Transformer task — a ManagerBasedRLEnv for locomotion with 28-term reward.
+
+Uses a custom ``LocoTransformerEnv`` subclass that adds:
+- A 3-step action buffer for the ``action_smoothness_l2`` reward.
+- Per-foot ray-caster scanners for the ``feet_height`` reward.
+"""
 
 import gymnasium as gym
 
@@ -17,7 +22,7 @@ from . import agents
 
 gym.register(
     id="RPO-Loco-Transformer",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerEnvCfg",
@@ -27,7 +32,7 @@ gym.register(
 
 gym.register(
     id="RPO-Loco-Transformer-Play",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerEnvCfg_PLAY",

@@ -48,8 +48,8 @@ class CrossAttentionActorCriticCfg(RslRlPpoActorCriticCfg):
     init_noise_std: float = 1.0
     actor_obs_normalization: bool = False
     critic_obs_normalization: bool = False
-    actor_hidden_dims: list[int] = [256, 128, 64]
-    critic_hidden_dims: list[int] = [256, 128, 64]
+    actor_hidden_dims: list[int] = [512, 256, 128]
+    critic_hidden_dims: list[int] = [512, 256, 128]
     activation: str = "elu"
 
     # ------------------------------------------------------------------
@@ -132,14 +132,14 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
         cnn_channels=[16, 32, 64],
         cnn_kernel_size=3,
         cnn_activation="elu",
-        actor_hidden_dims=[256, 128, 64],
-        critic_hidden_dims=[256, 128, 64],
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
         activation="elu",
         init_noise_std=1.0,
         noise_std_type="scalar",
         state_dependent_std=False,
-        actor_obs_normalization=False,
-        critic_obs_normalization=False,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
     )
 
     # PPO algorithm
@@ -191,11 +191,11 @@ class LocoTransformerMLPAgentCfg(RslRlOnPolicyRunnerCfg):
         class_name="ActorCritic",
         init_noise_std=1.0,
         noise_std_type="scalar",
-        actor_hidden_dims=[256, 128, 64],
-        critic_hidden_dims=[256, 128, 64],
+        actor_hidden_dims=[512, 256, 128],
+        critic_hidden_dims=[512, 256, 128],
         activation="elu",
-        actor_obs_normalization=False,
-        critic_obs_normalization=False,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
     )
 
     algorithm = RslRlPpoAlgorithmCfg(

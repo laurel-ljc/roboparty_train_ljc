@@ -23,16 +23,37 @@ from .observations import (
 # -- Isaac Lab built-in observation functions --
 from isaaclab.envs.mdp.observations import height_scan  # noqa: F401
 
-# -- Custom reward functions --
+# -- Custom reward functions (28 terms, 1:1 from RPO-Flat) --
 from .rewards import (
-    action_rate_l2,
-    ang_vel_xy_l2,
-    flat_orientation_l2,
-    joint_acc_l2,
-    joint_torques_l2,
+    # task / tracking
+    track_lin_vel_xy_yaw_frame_exp,
+    track_ang_vel_z_world_exp,
+    # regularization
     lin_vel_z_l2,
-    track_ang_vel_z_exp,
-    track_lin_vel_xy_exp,
+    ang_vel_xy_l2,
+    energy,
+    action_rate_l2,
+    action_smoothness_l2,
+    joint_torques_l2,
+    joint_vel_l2,
+    joint_acc_l2,
+    flat_orientation_l2,
+    undesired_contacts,
+    termination_penalty,
+    # gait / foot behavior
+    feet_air_time_positive_biped,
+    feet_slide,
+    feet_force,
+    feet_stumble,
+    feet_orientation_l2,
+    body_distance_y,
+    feet_contact_without_cmd,
+    feet_height,
+    # joint posture / deviation
+    joint_pos_limits,
+    joint_deviation_l1,
+    upward,
+    stand_still,
 )
 
 # -- Custom termination functions --

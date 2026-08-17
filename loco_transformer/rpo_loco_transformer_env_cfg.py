@@ -28,7 +28,7 @@ class RPOLocoTransformerEnvCfg(LocoTransformerEnvCfg):
 
 @configclass
 class RPOLocoTransformerEnvCfg_PLAY(RPOLocoTransformerEnvCfg):
-    """Play config: single environment, no noise, no pushing."""
+    """Play config: single environment, no noise, no pushing, no domain rand."""
 
     def __post_init__(self):
         super().__post_init__()
@@ -48,3 +48,11 @@ class RPOLocoTransformerEnvCfg_PLAY(RPOLocoTransformerEnvCfg):
 
         # disable random pushing
         self.events.push_robot = None
+
+        # disable domain randomization for deterministic playback
+        self.events.physics_material = None
+        self.events.add_base_mass = None
+        self.events.scale_link_mass = None
+        self.events.randomize_rigid_body_com = None
+        self.events.scale_actuator_gains = None
+        self.events.scale_joint_parameters = None
