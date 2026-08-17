@@ -20,8 +20,8 @@ from isaaclab.app import AppLauncher
 import cli_args  # isort: skip
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Play a trained RPO-Loco-Transformer agent.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+parser = argparse.ArgumentParser(description="Play and export a Loco-Transformer policy with RSL-RL.")
+parser.add_argument("--task", type=str, default="RPO-Loco-Transformer-Play", help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
 )
@@ -35,6 +35,8 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument("--lin-vel-step", type=float, default=0.05, help="Keyboard linear-velocity increment.")
+parser.add_argument("--ang-vel-step", type=float, default=0.05, help="Keyboard angular-velocity increment.")
 
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -64,6 +66,7 @@ installed_version = metadata.version("rsl-rl-lib")
 
 import gymnasium as gym
 import os
+import re
 import time
 import torch
 import copy
@@ -80,116 +83,76 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 
-from isaaclab_rl.rsl_rl import (
-    RslRlBaseRunnerCfg,
-    RslRlVecEnvWrapper,
-    export_policy_as_jit,
-    export_policy_as_onnx,
-    handle_deprecated_rsl_rl_cfg,
-)
-from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
 import loco_transformer  # noqa: F401
 
 
-# ------------------------------------------------------------------
-# Cross-attention policy exporters
-# ------------------------------------------------------------------
+def get_play_checkpoint_path(log_path: str, run_pattern: str, checkpoint_pattern: str) -> str:
+    """Find the newest checkpoint while skipping run directories without models."""
+    if not os.path.isdir(log_path):
+        raise ValueError(f"Experiment directory does not exist: {log_path}")
+    runs = [entry.path for entry in os.scandir(log_path) if entry.is_dir() and re.match(run_pattern, entry.name)]
+    for run_path in sorted(runs, key=os.path.getmtime, reverse=True):
+        checkpoints = [name for name in os.listdir(run_path) if re.match(checkpoint_pattern, name)]
+        if checkpoints:
+            checkpoints.sort(key=lambda name: f"{name:0>15}")
+            return os.path.join(run_path, checkpoints[-1])
+    raise ValueError(
+        f"No checkpoint in '{log_path}' matched run '{run_pattern}' and model '{checkpoint_pattern}'."
+    )
 
-class CrossAttnTorchPolicyExporter(torch.nn.Module):
-    """Export CrossAttentionActorCritic policy to TorchScript JIT."""
+
+class CrossAttentionPolicyExporter(torch.nn.Module):
+    """Flattened-tensor inference wrapper for ``CrossAttentionActorCritic``."""
 
     def __init__(self, policy, normalizer=None):
         super().__init__()
         self.actor = copy.deepcopy(policy.actor)
         self.encoder = copy.deepcopy(policy.encoder)
+        self.normalizer = copy.deepcopy(normalizer) if normalizer is not None else torch.nn.Identity()
         self.num_actor_obs = policy.num_actor_obs
-        self.actor_perception_range = policy.actor_perception_range
-        self.H = policy.H
-        self.W = policy.W
-        self.state_dependent_std = policy.state_dependent_std
-        if normalizer and not isinstance(normalizer, torch.nn.Identity):
-            self.normalizer = copy.deepcopy(normalizer)
-        else:
-            self.normalizer = torch.nn.Identity()
+        self.perception_start, self.perception_end = policy.actor_perception_range
+        self.height_map_shape = policy.height_map_shape
 
-    def forward(self, x):
-        flat_obs = self.normalizer(x)
-        s, e = self.actor_perception_range
-        proprio = torch.cat([flat_obs[:, :s], flat_obs[:, e:]], dim=-1)
-        height_scan = flat_obs[:, s:e]
-        height_map = height_scan.view(-1, self.H, self.W)
-        embedding = self.encoder(proprio, height_map)[0]
-        actor_input = torch.cat([proprio, embedding], dim=-1)
-        actions = self.actor(actor_input)
-        if self.state_dependent_std:
-            actions = actions[..., 0, :]
-        return actions
-
-    def export(self, path, filename):
-        os.makedirs(path, exist_ok=True)
-        path = os.path.join(path, filename)
-        self.to("cpu")
-        traced_script_module = torch.jit.script(self)
-        traced_script_module.save(path)
-
-
-class CrossAttnOnnxPolicyExporter(torch.nn.Module):
-    """Export CrossAttentionActorCritic policy to ONNX."""
-
-    def __init__(self, policy, normalizer=None, verbose=False):
-        super().__init__()
-        self.verbose = verbose
-        self.actor = copy.deepcopy(policy.actor)
-        self.encoder = copy.deepcopy(policy.encoder)
-        self.num_actor_obs = policy.num_actor_obs
-        self.actor_perception_range = policy.actor_perception_range
-        self.H = policy.H
-        self.W = policy.W
-        self.state_dependent_std = policy.state_dependent_std
-        if normalizer and not isinstance(normalizer, torch.nn.Identity):
-            self.normalizer = copy.deepcopy(normalizer)
-        else:
-            self.normalizer = torch.nn.Identity()
-
-    def forward(self, x):
-        flat_obs = self.normalizer(x)
-        s, e = self.actor_perception_range
-        proprio = torch.cat([flat_obs[:, :s], flat_obs[:, e:]], dim=-1)
-        height_scan = flat_obs[:, s:e]
-        height_map = height_scan.view(-1, self.H, self.W)
-        embedding = self.encoder(proprio, height_map)[0]
-        actor_input = torch.cat([proprio, embedding], dim=-1)
-        actions = self.actor(actor_input)
-        if self.state_dependent_std:
-            actions = actions[..., 0, :]
-        return actions
-
-    def export(self, path, filename):
-        self.to("cpu")
-        self.eval()
-        opset_version = 18
-        obs = torch.zeros(1, self.num_actor_obs)
-        torch.onnx.export(
-            self,
-            obs,
-            os.path.join(path, filename),
-            export_params=True,
-            opset_version=opset_version,
-            verbose=self.verbose,
-            input_names=["obs"],
-            output_names=["actions"],
-            dynamic_axes={},
+    def forward(self, obs):
+        obs = self.normalizer(obs)
+        proprio = torch.cat(
+            (obs[:, : self.perception_start], obs[:, self.perception_end :]), dim=-1
         )
+        height_map = obs[:, self.perception_start : self.perception_end].reshape(
+            -1, self.height_map_shape[0], self.height_map_shape[1]
+        )
+        embedding, _ = self.encoder(proprio, height_map)
+        return self.actor(torch.cat((proprio, embedding), dim=-1))
+
+    def export(self, path):
+        os.makedirs(path, exist_ok=True)
+        self.to("cpu").eval()
+        example = torch.zeros(1, self.num_actor_obs)
+        with torch.inference_mode():
+            traced = torch.jit.trace(self, example, strict=False)
+            traced.save(os.path.join(path, "policy.pt"))
+            torch.onnx.export(
+                self,
+                example,
+                os.path.join(path, "policy.onnx"),
+                export_params=True,
+                opset_version=18,
+                input_names=["obs"],
+                output_names=["actions"],
+                dynamic_axes={"obs": {0: "batch"}, "actions": {0: "batch"}},
+            )
 
 
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
-    """Load a trained policy, export models, and run interactive play with keyboard control."""
-    # grab task name for checkpoint path
-    task_name = args_cli.task.split(":")[-1]
-    train_task_name = task_name.replace("-Play", "")
+def main():
+    # load configurations from gym registry
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg = load_cfg_from_registry(
+        args_cli.task, "env_cfg_entry_point"
+    )
+    agent_cfg: RslRlBaseRunnerCfg = load_cfg_from_registry(args_cli.task, args_cli.agent)
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
@@ -209,14 +172,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # disable domain randomization for play
-    env_cfg.observations.policy.enable_corruption = False
-    if not args_cli.push_robot:
+    # The Loco-Transformer task is manager-based.  Configure the nested
+    # observation/command terms instead of the direct-environment attributes
+    # used by RoboLab's original play script.
+    if hasattr(env_cfg.observations, "policy"):
+        env_cfg.observations.policy.enable_corruption = False
+    if not args_cli.push_robot and hasattr(env_cfg.events, "push_robot"):
         env_cfg.events.push_robot = None
     env_cfg.episode_length_s = 40.0
-    env_cfg.commands.heading_command = False
-    env_cfg.commands.rel_standing_envs = 0.0
-    env_cfg.commands.rel_heading_envs = 0.0
+    command_cfg = env_cfg.commands.base_velocity
+    command_cfg.heading_command = False
+    command_cfg.rel_heading_envs = 0.0
+    command_cfg.rel_standing_envs = 0.0
+    # Prevent periodic random command resampling from overwriting keyboard input.
+    command_cfg.resampling_time_range = (1.0e9, 1.0e9)
+    command_cfg.ranges.lin_vel_x = (0.0, 0.0)
+    command_cfg.ranges.lin_vel_y = (0.0, 0.0)
+    command_cfg.ranges.ang_vel_z = (0.0, 0.0)
 
     if args_cli.plane:
         env_cfg.scene.terrain.terrain_generator = None
@@ -235,7 +207,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
     else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path = get_play_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     log_dir = os.path.dirname(resume_path)
 
@@ -245,18 +217,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    # zero out commands — keyboard will control them instead
-    if hasattr(env.unwrapped, "command_generator"):
-        # DirectRLEnv-style (robolab tasks)
-        env.unwrapped.command_generator.command[:, 0] = 0.0
-        env.unwrapped.command_generator.command[:, 1] = 0.0
-        env.unwrapped.command_generator.command[:, 2] = 0.0
-    elif hasattr(env.unwrapped, "command_manager"):
-        # ManagerBasedRLEnv-style (loco_transformer)
-        cmd = env.unwrapped.command_manager.get_command("base_velocity")
-        cmd[:, 0] = 0.0
-        cmd[:, 1] = 0.0
-        cmd[:, 2] = 0.0
+    command = env.unwrapped.command_manager.get_command("base_velocity")
+    command[:, :3] = 0.0
 
     # convert to single-agent instance if required
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -270,7 +232,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
-        print("[INFO] Recording videos during play.")
+        print("[INFO] Recording video during playback.")
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
@@ -306,25 +268,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # export policy
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    if hasattr(policy_nn, "encoder") and hasattr(policy_nn, "actor_perception_range"):
-        # Cross-attention policy — use custom exporters
-        torch_policy_exporter = CrossAttnTorchPolicyExporter(policy_nn, normalizer)
-        torch_policy_exporter.export(path=export_model_dir, filename="policy.pt")
-        onnx_policy_exporter = CrossAttnOnnxPolicyExporter(policy_nn, normalizer, verbose=False)
-        onnx_policy_exporter.export(path=export_model_dir, filename="policy.onnx")
-        print(f"[INFO] Exported cross-attention policy to {export_model_dir}")
+    if not os.path.exists(export_model_dir):
+        os.makedirs(export_model_dir, exist_ok=True)
+    if all(hasattr(policy_nn, name) for name in ("encoder", "actor_perception_range", "height_map_shape")):
+        CrossAttentionPolicyExporter(policy_nn, normalizer).export(export_model_dir)
     else:
         # Standard MLP policy — use built-in exporters
         export_policy_as_jit(policy_nn, normalizer, path=export_model_dir, filename="policy.pt")
         export_policy_as_onnx(
             policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx"
         )
-        print(f"[INFO] Exported standard policy to {export_model_dir}")
+    print(f"[INFO] Exported policy files to: {export_model_dir}")
 
     # keyboard control
     if not args_cli.headless:
-        from robolab.utils.keyboard import Keyboard
-        keyboard = Keyboard(env)  # noqa: F841
+        from loco_transformer.utils import VelocityCommandKeyboard
+
+        keyboard = VelocityCommandKeyboard(
+            env,
+            lin_vel_step=args_cli.lin_vel_step,
+            ang_vel_step=args_cli.ang_vel_step,
+        )  # keep a strong reference for the lifetime of the play loop
 
     dt = env.unwrapped.step_dt
 
@@ -336,6 +300,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
+            if not args_cli.headless:
+                keyboard.advance()
             actions = policy(obs)
             obs, _, _, _ = env.step(actions)
         if args_cli.video:
