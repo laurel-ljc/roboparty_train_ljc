@@ -83,7 +83,12 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
+from isaaclab_rl.rsl_rl import (
+    RslRlBaseRunnerCfg,
+    RslRlVecEnvWrapper,
+    export_policy_as_jit,
+    export_policy_as_onnx,
+)
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
@@ -156,11 +161,15 @@ def main():
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    # The existing Loco-Transformer checkpoints were trained with the original
+    # 256-128-64 MLP heads and without observation normalization.  Keep playback
+    # pinned to that architecture even if the registered agent config drifts.
+    agent_cfg.policy.actor_hidden_dims = [256, 128, 64]
+    agent_cfg.policy.critic_hidden_dims = [256, 128, 64]
+    agent_cfg.policy.actor_obs_normalization = False
+    agent_cfg.policy.critic_obs_normalization = False
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.scene.env_spacing = 2.5
-
-    # handle deprecated configurations
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # rsl-rl 3.x compatibility
     if version.parse(installed_version) < version.parse("5.0.0"):
