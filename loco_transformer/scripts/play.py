@@ -4,11 +4,11 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Play script for the RPO-Loco-Transformer task.
+"""Play script for the RPO-Loco-Transformer task family.
 
-Loads a trained checkpoint from ``logs/rsl_rl/loco_transformer``, exports
-``policy.pt`` and ``policy.onnx``, then launches the Isaac Sim window with
-keyboard velocity control.
+Loads a trained checkpoint from the registered task's experiment directory,
+exports ``policy.pt`` and ``policy.onnx``, then launches the Isaac Sim window
+with keyboard velocity control.
 """
 
 import argparse

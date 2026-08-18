@@ -1,11 +1,12 @@
 # Copyright (c) 2025-2026, Loco-Transformer Project Developers.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Interactive MuJoCo Sim2Sim playback for a Loco-Transformer policy.
+"""Interactive MuJoCo Sim2Sim playback for Loco-Transformer policies.
 
 The script consumes the flattened ``policy.pt`` exported by ``play.py`` and
-reconstructs the 309-dimensional training observation, including the 21 x 11
-yaw-aligned height scan.
+supports both the original 309-dimensional observation and the 777-dimensional
+ten-frame proprioceptive-history observation.  Both variants use the current
+21 x 11 yaw-aligned height scan.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import argparse
 import threading
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import mujoco
 import mujoco.viewer
@@ -27,6 +29,9 @@ ANGULAR_VELOCITY_SCALE = 0.25
 HEIGHT_SCAN_OFFSET = 0.5
 HEIGHT_SCAN_SHAPE = (11, 21)  # (y rows, x columns), matching the training policy
 HEIGHT_SCAN_RESOLUTION = 0.1
+CURRENT_OBSERVATION_DIM = 309
+HISTORY_OBSERVATION_DIM = 777
+PROPRIOCEPTIVE_HISTORY_LENGTH = 10
 
 # MuJoCo stores the joints in the depth-first URDF order below.  Isaac Sim's
 # articulation/action order is breadth-first; this is the same verified mapping
@@ -141,6 +146,61 @@ class KeyboardCommands:
             return requested
 
 
+class ProprioceptiveState(NamedTuple):
+    """The 52 sensed dimensions that receive temporal history."""
+
+    angular_velocity: np.ndarray
+    projected_gravity: np.ndarray
+    joint_position: np.ndarray
+    joint_velocity: np.ndarray
+
+
+class ProprioceptiveHistory:
+    """Term-major, oldest-to-newest history matching Isaac Lab observations."""
+
+    _FIELD_NAMES = ProprioceptiveState._fields
+
+    def __init__(self, length: int = PROPRIOCEPTIVE_HISTORY_LENGTH) -> None:
+        if length < 1:
+            raise ValueError(f"History length must be positive, got {length}.")
+        self.length = length
+        self._buffers: dict[str, np.ndarray] | None = None
+
+    def clear(self) -> None:
+        """Mark the history empty so the next state fills every history slot."""
+        self._buffers = None
+
+    def append(self, state: ProprioceptiveState) -> None:
+        """Append one control-rate state, filling all slots on first append."""
+        values = {
+            name: np.asarray(getattr(state, name), dtype=np.float32)
+            for name in self._FIELD_NAMES
+        }
+        if self._buffers is None:
+            self._buffers = {
+                name: np.repeat(value[np.newaxis, :], self.length, axis=0)
+                for name, value in values.items()
+            }
+            return
+
+        for name, value in values.items():
+            buffer = self._buffers[name]
+            if value.shape != buffer.shape[1:]:
+                raise ValueError(
+                    f"History term '{name}' changed shape from {buffer.shape[1:]} to {value.shape}."
+                )
+            buffer[:-1] = buffer[1:].copy()
+            buffer[-1] = value
+
+    def flattened_parts(self) -> ProprioceptiveState:
+        """Return the four term histories, each flattened oldest-to-newest."""
+        if self._buffers is None:
+            raise RuntimeError("Cannot read an empty proprioceptive history.")
+        return ProprioceptiveState(
+            *(self._buffers[name].reshape(-1) for name in self._FIELD_NAMES)
+        )
+
+
 def _joint_addresses(model: mujoco.MjModel) -> tuple[np.ndarray, np.ndarray]:
     qpos_addresses = []
     dof_addresses = []
@@ -207,6 +267,58 @@ def _height_scan(
     return heights
 
 
+def _proprioceptive_state(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    qpos_addresses: np.ndarray,
+    dof_addresses: np.ndarray,
+) -> ProprioceptiveState:
+    joint_pos_mujoco = data.qpos[qpos_addresses] - DEFAULT_POS
+    joint_vel_mujoco = data.qvel[dof_addresses]
+    joint_pos_isaac = joint_pos_mujoco[ISAAC_TO_MUJOCO]
+    joint_vel_isaac = joint_vel_mujoco[ISAAC_TO_MUJOCO]
+    angular_velocity = np.asarray(data.sensor("angular-velocity").data) * ANGULAR_VELOCITY_SCALE
+
+    return ProprioceptiveState(
+        angular_velocity=np.asarray(angular_velocity, dtype=np.float32),
+        projected_gravity=np.asarray(_projected_gravity(data), dtype=np.float32),
+        joint_position=np.asarray(joint_pos_isaac, dtype=np.float32),
+        joint_velocity=np.asarray(joint_vel_isaac, dtype=np.float32),
+    )
+
+
+def _assemble_observation(
+    state: ProprioceptiveState,
+    command: np.ndarray,
+    last_action: np.ndarray,
+    height_scan: np.ndarray,
+    history: ProprioceptiveHistory | None = None,
+) -> np.ndarray:
+    """Assemble either the original or ten-frame term-major observation."""
+    if history is None:
+        state_parts = state
+        expected_dim = CURRENT_OBSERVATION_DIM
+    else:
+        history.append(state)
+        state_parts = history.flattened_parts()
+        expected_dim = HISTORY_OBSERVATION_DIM
+
+    obs = np.concatenate(
+        (
+            state_parts.angular_velocity,
+            state_parts.projected_gravity,
+            command,
+            state_parts.joint_position,
+            state_parts.joint_velocity,
+            last_action,
+            height_scan,
+        )
+    ).astype(np.float32)
+    if obs.shape != (expected_dim,):
+        raise RuntimeError(f"Expected a {expected_dim}-dimensional policy observation, got {obs.shape}.")
+    return obs
+
+
 def _observation(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -216,27 +328,11 @@ def _observation(
     command: np.ndarray,
     scan_offsets: np.ndarray,
     torso_body_id: int,
+    history: ProprioceptiveHistory | None = None,
 ) -> np.ndarray:
-    joint_pos_mujoco = data.qpos[qpos_addresses] - DEFAULT_POS
-    joint_vel_mujoco = data.qvel[dof_addresses]
-    joint_pos_isaac = joint_pos_mujoco[ISAAC_TO_MUJOCO]
-    joint_vel_isaac = joint_vel_mujoco[ISAAC_TO_MUJOCO]
-    angular_velocity = np.asarray(data.sensor("angular-velocity").data) * ANGULAR_VELOCITY_SCALE
-
-    obs = np.concatenate(
-        (
-            angular_velocity,
-            _projected_gravity(data),
-            command,
-            joint_pos_isaac,
-            joint_vel_isaac,
-            last_action,
-            _height_scan(model, data, scan_offsets, torso_body_id),
-        )
-    ).astype(np.float32)
-    if obs.shape != (309,):
-        raise RuntimeError(f"Expected a 309-dimensional policy observation, got {obs.shape}.")
-    return obs
+    state = _proprioceptive_state(model, data, qpos_addresses, dof_addresses)
+    height_scan = _height_scan(model, data, scan_offsets, torso_body_id)
+    return _assemble_observation(state, command, last_action, height_scan, history)
 
 
 def _policy_action(policy: torch.jit.ScriptModule, observation: np.ndarray) -> np.ndarray:
@@ -248,6 +344,27 @@ def _policy_action(policy: torch.jit.ScriptModule, observation: np.ndarray) -> n
     if action.shape != (NUM_ACTIONS,):
         raise RuntimeError(f"Expected {NUM_ACTIONS} policy actions, got {action.shape}.")
     return action
+
+
+def _detect_policy_observation_dim(policy: torch.jit.ScriptModule) -> int:
+    """Detect whether an exported policy accepts the 309-D or 777-D layout."""
+    accepted_dims = []
+    failures = {}
+    for observation_dim in (CURRENT_OBSERVATION_DIM, HISTORY_OBSERVATION_DIM):
+        try:
+            _policy_action(policy, np.zeros(observation_dim, dtype=np.float32))
+        except (RuntimeError, ValueError, IndexError) as error:
+            failures[observation_dim] = str(error).splitlines()[-1]
+        else:
+            accepted_dims.append(observation_dim)
+
+    if len(accepted_dims) != 1:
+        details = "; ".join(f"{dim}D: {message}" for dim, message in failures.items())
+        raise RuntimeError(
+            "Could not uniquely identify the policy observation layout. "
+            f"Accepted dimensions: {accepted_dims or 'none'}. {details}"
+        )
+    return accepted_dims[0]
 
 
 def run(args: argparse.Namespace) -> None:
@@ -262,6 +379,13 @@ def run(args: argparse.Namespace) -> None:
 
     policy = torch.jit.load(str(args.load_model), map_location="cpu")
     policy.eval()
+    observation_dim = _detect_policy_observation_dim(policy)
+    history = (
+        ProprioceptiveHistory()
+        if observation_dim == HISTORY_OBSERVATION_DIM
+        else None
+    )
+    print(f"[MuJoCo] Detected {observation_dim}-dimensional policy observation.")
     keyboard = KeyboardCommands(args.lin_vel_step, args.ang_vel_step)
     scan_offsets = _height_scan_offsets()
     action = np.zeros(NUM_ACTIONS, dtype=np.float64)
@@ -287,6 +411,8 @@ def run(args: argparse.Namespace) -> None:
                 _reset_robot(model, data, qpos_addresses)
                 action.fill(0.0)
                 target_pos[:] = DEFAULT_POS
+                if history is not None:
+                    history.clear()
                 start_sim_time = data.time
 
             command = keyboard.snapshot()
@@ -299,6 +425,7 @@ def run(args: argparse.Namespace) -> None:
                 command,
                 scan_offsets,
                 torso_body_id,
+                history,
             )
             action = _policy_action(policy, obs)
             target_pos[:] = DEFAULT_POS

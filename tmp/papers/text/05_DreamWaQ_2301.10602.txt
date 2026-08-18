@@ -1,0 +1,686 @@
+===== PAGE 1 =====
+DreamWaQ: Learning Robust Quadrupedal Locomotion With Implicit
+Terrain Imagination via Deep Reinforcement Learning
+I Made Aswin Nahrendra1, Byeongho Yu1, and Hyun Myung1∗, Senior Member, IEEE
+Abstract—Quadrupedal robots resemble the physical ability Training in simulation Context-aided Estimator Policy Network (Actor)
+128×64×19 512×256×128×12
+of legged animals to walk through unstructured terrains.
+However, designing a controller for quadrupedal robots poses Temporal partial
+$!,&! Policy gradient
+observations
+a significant challenge due to their functional complexity ("! ")
+and requires adaptation to various terrains. Recently, deep Current obs. ("!)
+reinforcement learning, inspired by how legged animals learn Value Network (Critic)
+512×256×128×1
+to walk from their experiences, has been utilized to synthe-
+Privileged observations
+size natural quadrupedal locomotion. However, state-of-the-art (!!)
+methods strongly depend on a complex and reliable sensing
+framework. Furthermore, prior works that rely only on pro-
+prioception have shown a limited demonstration for overcoming Zero-shot sim-to-real
+challenging terrains, especially for a long distance. This work
+proposes a novel quadrupedal locomotion learning framework
+$!,&!
+that allows quadrupedal robots to walk through challenging "! " "! #!
+terrains, even with limited sensing modalities. The proposed
+Fig. 1: Overview of DreamWaQ. By learning a locomotion policy in a
+framework was validated in real-world outdoor environments simulation, the robot can walk through challenging terrains such as stairs
+with varying conditions within a single run for a long distance. with zero-shot sim-to-real.
+I. INTRODUCTION
+In recent years, quadrupedal robots have played an important
+conditions, and while a 3D LiDAR can be utilized to
+role in various applications, such as industrial inspection
+distinguish ground and traversable regions, accurately es-
+and exploration [1]–[6]. Unlike wheeled mobile robots,
+timating the physical characteristics of the terrain remains
+quadrupedal robots can traverse unstructured terrains but are
+challenging [16]–[18]. For instance, snow may appear as a
+relatively difficult to control. Conventional model-based con-
+solid and passable surface, but it is actually soft and pliable.
+trollers often require a complex pipeline consisting of state
+Additionally, tall grass that appears impassable to a camera
+estimation, trajectory optimization, gait optimization, and
+can still be easily traversed by legged robots.
+actuator control [1]–[3], [7]–[11]. Such a complex model-
+Meanwhile, proprioceptive sensors, such as an inertial
+based pipeline requires considerable human effort for accu-
+measurement unit (IMU) and joint encoder, are relatively
+rate modeling and rigorous parameter tuning. Moreover, the
+light and robust compared to exteroceptive sensors. Recent
+linearized quadrupedal model often limits its performance,
+works have shown that by combining different proprioception
+hindering its full capability.
+modalities, a quadrupedal robot can learn to estimate its
+Legged animals can efficiently plan their gait by visually
+surrounding terrain [19]–[23] and body state [24]. However,
+perceiving the surrounding terrains. This natural mechanism
+these works have a limited empirical demonstration for a
+has inspired many works on training a perceptive locomotion
+long-distance operation with various challenging terrains,
+policy via deep reinforcement learning (RL) that can enable
+where legged robots may fail due to high uncertainties and
+a quadrupedal robot to traverse unstructured terrains [12]–
+estimation errors.
+[15]. In these frontier works, the robot is equipped with
+Estimating the surrounding terrain’s properties via pro-
+exteroceptive sensors such as a camera or LiDAR to observe
+prioception while learning a locomotion policy requires
+its surroundings. Subsequently, exteroception is used with the
+an iterative process [19], [20], [23]. The policy needs to
+controller to plan the robot’s trajectory and gait to traverse
+understand the terrain properties to learn robust behavior.
+through the environment safely.
+However, to adequately learn the terrain properties, the robot
+However, exteroception may not always be dependable.
+should be able to walk accordingly and explore a wide
+Cameras can malfunction in adverse weather and lighting
+spectrum of terrain properties. This dilemma is often called
+This work was supported by Korea Evaluation Institute of Industrial the representation learning bottleneck [25], which can hinder
+Technology (KEIT) grant funded by the Korea Government (MOTIE) optimal policy learning. Therefore, a learning framework that
+(No. 20018216, “Development of Mobile Intelligence SW for Autonomous
+jointly learn a robust policy with an accurate environment
+Navigation of Legged Robots in Dynamic and Atypical Environments for
+Real Application”). The students are supported by BK21 FOUR. representation is required.
+1The authors are with the School of Electrical Engineering at Korea In this paper, we proposed a framework called Dream
+Advanced Institute of Science and Technology (KAIST), Daejeon, 34141,
+Walking for Quadrupedal Robots (DreamWaQ), that trains
+Republic of Korea. {anahrendra, bhyu, hmyung}@kaist.ac.kr
+∗Corresponding Author: Hyun Myung a robust locomotion policy for quadrupedal robots with
+3202
+raM
+3
+]OR.sc[
+2v20601.1032:viXra
+
+===== PAGE 2 =====
+only proprioception via a deep RL algorithm. DreamWaQ failure states in which the teacher policy has learned in the
+trains a locomotion policy to implicitly infer the terrain early stage of learning using RL. This limitation is because,
+properties, such as height map, friction, restitution, and during BC, the student policy is only provided with good
+obstacles. Consequently, the robot can adapt its gait to walk action supervision from the teacher policy.
+safely through various terrains. We deployed DreamWaQ on For learning implicit terrain imagination, we adopted an
+a Unitree A1 [26] robot to robustly walk through challenging asymmetric actor-critic architecture [28]. We discovered that
+natural and man-made environments. the interplay between the policy and value networks in actor-
+In summary, the contributions of this work are threefold: critic algorithms is sufficient for learning a robust locomotion
+1) A novel locomotion learning framework via an asym- policy that could implicitly imagine the privileged observa-
+metric actor-critic architecture is proposed to implicitly tions, given partial temporal observations. In DreamWaQ,
+imagine terrain properties using only proprioception. the policy (actor) receives temporal partial observations, oH t ,
+2) A context-aided estimator network is proposed to es- as the input, while the value network (critic) receives the
+timate body state and environmental context jointly. full state, s t , as shown in Fig. 1. In this work, we use
+Together with the policy, our method outperforms H = 5. Consequently, the data efficiency during training
+existing learning-based methods. is significantly increased because only one training phase
+3) A robustness and durability evaluation of the learned is required. Moreover, the policy can explore all possible
+policy in the real world was conducted through walking trajectories during training, increasing its robustness through
+in diverse outdoor environments. To the best of our generalization. In this work, the policy is optimized using
+knowledge, this is the first time a Unitree A1, which the proximal policy optimization (PPO) algorithm [29].
+is significantly smaller that an ANYmal robot, has 1) Policy Network: The policy, π φ (a t |o t ,v t ,z t ) is a neural
+been demonstrated to sustainably walk on challenging network parameterized by φ that infers an action a t , given
+terrain such as hills and yards.1 a proprioceptive observation o t , body velocity v t , and latent
+state z . o is measured directly from joint encoders and IMU,
+The remainder of this paper is organized as follows. Sec- t t
+while v and z are estimated by a context-aided estimator
+tion II discusses our proposed method thoroughly. Section III t t
+network (CENet), which will be discussed in Section II-C.
+presents the experimental setting, results, and an in-depth
+o is an n × 1 vector defined as follows:
+comparative analysis of the proposed and baseline methods. t
+Finally, Section IV concludes this work and briefly discusses o = (cid:2) ω g c θ θ˙ a (cid:3)T , (1)
+directions for future work. t t t t t t t−1
+where ω , g , c , θ , θ˙ , and a are the body angular
+II. DREAMWAQ t t t t t t−1
+velocity, gravity vector in the body frame, body velocity
+A. Preliminaries
+command, joint angle, joint angular velocity, and previous
+In this work, the environment is modeled as an action, respectively.
+infinite-horizon partially observable Markov decision process 2) Value Network: The value network is trained to output
+(POMDP), defined by the tuple M = (S,O,A,d 0 ,p,r,γ). an estimation of the state value, V (s t ). Unlike the policy, the
+The full state, partial observation, and action are continuous, value network receives the privileged observation, s , which
+t
+and defined by s ∈ S, o ∈ O, and a ∈ A, respectively. The is defined as
+environment starts with an initial state distribution, d (s );
+0 0 (cid:2) (cid:3)T
+s = o v d h , (2)
+progresses with a state transition probability p(s |s ,a ); t t t t t
+t+1 t t
+and each transition is rewarded with a reward function,
+where d is the disturbance force applied randomly on the
+t
+r : S × A → R. The discount factor is defined by
+robot’s body and h is the height map scan of the robot’s
+t
+γ ∈ [0,1). Additionally, in this paper, we define a temporal
+surroundings as an exteroceptive cue for the value network.
+observation at time t over the past H measurements as
+In the proposed DreamWaQ, the policy network is trained to
+oH t = (cid:2) o t o t−1 ...o t−H (cid:3)T . We also define a context vector, implicitly infer d t and h t from proprioception.
+z t , which contains a latent representation of the world state. 3) Action Space: The action space is a 12 × 1 vector,
+The context vector is inferred using the method that will be a , corresponding to the desired joint angle of the robot. To
+t
+discussed in Section II-C. facilitate learning, we train the policy to infer the desired
+joint angle around the robot’s stand still pose, θ . Hence,
+B. Implicit Terrain Imagination stand
+the robot’s desired joint angle is defined as
+Recent works have leveraged the teacher-student training
+paradigm [27]. Although it has been empirically shown that θ = θ + a . (3)
+des stand t
+the student policy is as good as the teacher’s, behavior
+The desired joint angles are tracked using a proportional–
+cloning (BC) bounds the student policy’s performance with
+derivative (PD) controller for each joint.
+the teacher policy [19], [20], [23]. Moreover, sequentially
+4) Reward Function: Our reward function closely follows
+training the teacher and student networks is data ineffi-
+other works [12], [19], [20], [22], [24], [30] to highlight the
+cient [24]. The student policy might be unable to explore
+effect of DreamWaQ’s components instead of reward tuning.
+1Project site: https://sites.google.com/view/dreamwaq The reward function consists of task rewards for tracking the
+
+===== PAGE 3 =====
+TABLE I: Reward function elements. exp(·) and var(·) are exponential Body velocity
+and variance operators, respectively. (·)des and (·)cmd indicate the desired 3×1 𝐯 ! estimation model
+and commanded values, respectively. x,y, and z are defined on the robot’s 𝐨" Body linear velocity(𝐯!)
+b
+vx
+od
+y
+y
+, ω
+fr
+y
+a
+a
+m
+w
+e
+,
+,
+h
+w
+,
+i
+p
+th
+f,z
+x
+,k
+a
+,
+n
+v
+d
+f,
+z
+xy
+p
+,k
+oi
+,
+n
+a
+ti
+n
+n
+d
+g
+τ
+fo
+a
+r
+r
+w
+e
+a
+t
+r
+h
+d
+e
+a
+g
+n
+r
+d
+av
+u
+it
+p
+y
+w
+v
+a
+e
+r
+c
+d
+t
+,
+or
+re
+p
+s
+r
+p
+o
+e
+j
+c
+e
+t
+c
+i
+t
+v
+e
+e
+d
+ly
+i
+.
+nt
+g
+o
+, ! 𝐳
+!
+𝐨 !#$
+𝐨! "
+C
+Te
+o
+m
+nt
+p
+e
+o
+x
+r
+t
+a
+v
+l
+e
+p
+c
+a
+to
+rt
+r
+i a
+(
+l
+𝐳
+o
+!)
+bservations
+t h h e e ig r h o t b w ot . ’ r s .t. b t o h d e y g f r r o a u m nd e, , f li o n o e t a h r e v ig el h o t c , i f t o ie o s t i l n ate th ra e l x ve y lo p c l i a t n y, e, an y d aw joi r n a t te t , or b q o u d e y , 128×64×19 16×1 6 A 4 u × to 1 - 2 e 8 n × co 4 d 8 er model 𝐨!#$ Next partial observations
+respectively.
+Fig. 2: The architecture of CENet consists of a body velocity estimation
+model and an auto-encoder model that shares a unified encoder. The shared
+Reward Equation (ri) Weight (wi) encoder is trained to provide a robust body state and context estimation
+Lin. velocity tracking exp (cid:8) −4(vc
+x
+m
+y
+d −vxy)2(cid:9) 1.0 jointly.
+Ang. velocity tracking exp (cid:8) −4(ω
+y
+cm
+aw
+d −ωyaw)2(cid:9) 0.5
+Linear velocity (z) v2 −2.0
+z
+Angular velocity (xy) ω2 −0.05 of only explicitly estimating the robot’s state, we propose
+xy
+Orientation |g|2 −0.2 a context-aided estimator network (CENet) architecture to
+Joint accelerations θ¨2 −2.5×10−7 jointly learn to estimate and infer a latent representation of
+Joint power |τ||θ˙| −2×10−5 the environment. The advantages of the proposed CENet are:
+Body height (hdes −h)2 −1.0
+Foot clearance (pd f e , s z,k −p f,z,k )2 ·v f,xy,k −0.01 1) the network architecture is significantly simplified and
+Action rate (at −at−1)2 −0.01 runs synchronously during inference owing to the shared
+Smoothness (at −2at−1 +at−2)2 −0.01 encoder architecture; 2) the encoder network can jointly learn
+Power distribution var(τ ·θ˙)2 −10−5 the robot’s forward and backward dynamics via the auto-
+encoding mechanism, hence, increasing its accuracy.
+CENet consists of a single encoder and a multi-head
+decoder architecture as shown in Fig. 2. The encoder network
+commanded velocity and stability rewards to produce a stable
+encodes oH into v and z . The first head estimates v ,
+and natural locomotion behavior. The details of the reward t t t t
+whereas the second reconstructs o . We leveraged a β-
+function are presented in Table I. The total reward of the t+1
+variational auto-encoder (β-VAE) [31]–[33] as the auto-
+policy for taking an action at each state is given as:
+encoder architecture. CENet is optimized using a hybrid loss
+(cid:88)
+r (s ,a ) = r w , (4) function, defined as follows:
+t t t i i
+L = L + L , (5)
+where i is the index of each reward, as shown in Table I. CE est VAE
+The complex reward function for learning a locomotion where L and L are the body velocity estimation and
+est VAE
+policy usually includes a motor power minimization term. VAE loss, respectively. For explicit state estimation, we
+However, this reward minimizes the overall power with- employed a mean-squared-error (MSE) loss between the
+out considering each motor’s power usage balance. Conse- estimated body velocity, ˜v , and the ground truth, v , from
+t t
+quently, in the long run, some motors might overheat faster the simulator as follows:
+than others. Therefore, we introduced a power distribution
+L = MSE(˜v ,v ). (6)
+reward to reduce motor overheating in the real world by est t t
+penalizing motors’ power with high variance over all motors The VAE network is trained with the standard β-VAE
+used on the robot. loss, which consists of reconstruction and latent losses. We
+5) Curriculum Learning: We utilized a game-inspired employed MSE for the reconstruction loss and Kullback-
+curriculum [12] to ensure progressive locomotion policy Leibler (KL) divergence [34] as the latent loss. The VAE
+learning over difficult terrains. The terrains consisted of loss is formulated as
+smooth, rough, discretized, and stair terrains with ten levels
+L = MSE(˜o ,o ) + βD (q(z |oH) (cid:107) p(z )), (7)
+of inclination within [0°,22°]. Furthermore, we found that VAE t+1 t+1 KL t t t
+utilizing the grid-adaptive curriculum [23] for low-speed where ˜o is the reconstructed next observation, q(z |oH)
+t+1 t t
+locomotion results in a better and more stable turning that is the posterior distribution of the z , given oH. p(z ) is
+t t t
+prevents foot tripping. the context’s prior distribution parameterized by a Gaussian
+distribution. We chose a standard normal distribution for the
+C. Context-Aided Estimator Network
+prior distribution because all observations are normalized to
+The policy trained using the method described in Sec- have a zero mean and unit variance.
+tion II-B requires v and z as input, which can be estimated Additionally, bootstrapping from an estimator network
+t t
+from proprioception. Prior works estimate z as the latent during policy network training may increase the sim-to-
+t
+variable for understanding terrain properties [20], [21], [23]. real robustness of the learned policy [24]. However, we
+Additionally, estimating v using a learned network signifi- discovered that bootstrapping may also harm the policy’s
+t
+cantly improves the locomotion policy’s robustness [24] by performance because of the large learning noise at the
+eliminating the accumulated estimation drift. early stage of learning. Therefore, we propose an adaptive
+Motivated by those prior works, we discovered that the bootstrapping (AdaBoot) method that adaptively tunes the
+interplay between terrain and body state estimates signif- bootstrapping probability during training. AdaBoot is con-
+icantly improves body state estimation accuracy. Instead trolled by the coefficient of variation (CV), i.e., the ratio of
+
+===== PAGE 4 =====
+TABLE II: Domain randomization ranges applied in the simulation.
+the standard deviation to the mean, of the episodic reward
+over m domain-randomized environments. The key idea is
+Parameter Randomization range Unit
+that bootstrapping is required when the CV of m agents’
+Payload [−1,2] kg
+rewards is small to make the policy more robust against Kp factor [0.9,1.1] Nm/rad
+inaccurate estimation. However, it should not bootstrap when
+Kd factor [0.9,1.1] Nms/rad
+Motor strength factor [0.9,1.1] Nm
+the agents have not learned well enough, as indicated by Center of mass shift [−50,50] mm
+Friction coefficient [0.2,1.25] -
+a large CV in their rewards. We define the bootstrapping
+System delay [0.0,15.0] ms
+probability for each learning iteration as follows:
+p = 1 − tanh(CV (R)), (8)
+boot
+where p ∈ [0,1] is the bootstrapping probability and R
+boot
+is an m×1 vector of episodic rewards from m domain-
+randomized environments. CV (·), and tanh(·) are coefficient
+of variation and hyperbolic tangent operations, respectively.
+tanh is used to smoothly upper-bounds CV (R) to one.
+Fig. 3: Learning curves of different algorithms. The results shown are
+III. EXPERIMENTS obtained from ten different random seeds. The curves and shaded regions
+indicate the mean and standard deviation of the reward over ten different
+seeds, respectively. The oracle policy has access to the height map mea-
+A. Compared Methods surement of the robot’s surroundings as in [12].
+For a comparative evaluation, we compared the following
+algorithms with access to proprioceptions only:
+algorithm took approximately one hour to generate data equal
+1) Baseline [12]: The policy was trained without any
+to approximately 46 days of training in the real world.
+adaptation mechanism.
+Fig. 3 compares the learning curves of DreamWaQ against
+2) AdaptationNet [20], [21]: The policy was trained
+those of all the other methods for learning the locomotion
+with an implicit environmental factor encoder using
+policy of a Unitree A1 robot. It can be seen that even though
+the student-teacher training framework. The policy
+EstimatorNet initially has a higher mean episodic reward
+network consists of 1D convolutional neural network
+than AdaptationNet, its performance plummets after more
+(CNN) layers and multilayer perceptron (MLP) layers.
+iterations because it encounters more difficult terrains after
+3) EstimatorNet [24]: The policy was concurrently
+longer training iterations. Conversely, DreamWaQ consis-
+trained with an estimator network that explicitly es-
+tently outperforms all the other methods. Moreover, despite
+timates the body state without a context estimation.
+walking without exteroception, DreamWaQ performs almost
+4) DreamWaQ w/o AdaBoot: The proposed method
+as well as the oracle policy that has direct access to the
+without adaptive bootstrapping.
+surrounding terrain’s height map.
+5) DreamWaQ w/ AdaBoot: The proposed method with
+adaptive bootstrapping. C. Real-World Experimental Setup
+All the methods above were trained using the curriculum Real-world experiments were conducted using a Unitree
+strategy and reward functions detailed in Section II. For a A1 [26] robot. All estimation and control processes were
+fair comparison, we used the same network architecture and run on an Intel NUC mounted on top of the robot and we
+fixed the initial random seeds for all methods. All networks used the PyBind interface provided in [38] to send the joint
+used exponential linear units (ELUs) [35] as the activation angle command to the robot. An additional onboard PC with
+functions for the hidden layers a battery added a payload of approximately 500 g to the
+robot. During inference, the policy runs synchronously with
+B. Simulation
+the CENet at 50 Hz. The desired joint angles were tracked
+We used the Isaac Gym simulator [36] based on the using a PD controller with proportional and derivative gains
+open-source implementation of [12] to synchronously train of K = 28 and K = 0.7, respectively at 200 Hz.
+p d
+the policy, value, and CENet networks for 1,000 iterations.
+D. Command Tracking
+We trained 4,096 agents domain-randomized agents in par-
+allel. The details of the randomized parameters are listed We evaluated the command tracking performance in a
+in Table II. For all algorithms, the policy network was Gazebo simulation to obtain accurate ground truth. The
+trained using PPO with clipping range, generalized advantage robot was given random commands for ten minutes, and the
+estimation factor, and discount factor of 0.2, 0.95, and 0.99, commands were uniformly sampled from [−1.0,1.0] every
+respectively. The networks were optimized using the Adam ten seconds. For fair comparison, random commands were
+optimizer [37] with a learning rate of 10−3. generated using the same random seed for each controller.
+All training was performed on a desktop PC with an Intel Each controller was run five times with different random
+Core i7-8700 CPU @ 3.20 GHz, 32 GB RAM, and an seeds to verify repeatability. We measured absolute tracking
+NVIDIA RTX 3060Ti GPU. Training using the DreamWaQ error (ATE) as the performance metric and constructed a
+
+===== PAGE 5 =====
+rorre
+gnikcarT
+TABLE III: Robustness test. Bold values indicate results with the most
+robust performance.
+Algorithm Max. push (m/s) Survival rate (%)
+Baseline 0.511±0.053 20.51±6.44
+AdaptationNet 0.714±0.096 82.37±2.49
+EstimatorNet 0.871±0.124 80.92±5.73
+DreamWaQ w/o AdaBoot 1.015±0.121 90.71±1.25
+DreamWaQ w/ AdaBoot 1.121±0.164 95.23±1.61
+𝑣! " 𝑣# " 𝜔$ "
+Fig. 4: Command tracking error represented as a boxplot. ve and ve are
+x y
+forward and lateral velocity tracking errors, respectively, measured in m/s. sampled from [−vmax,vmax], where vmax ≥0 is the maximum
+ωe is yaw rate tracking error measured in rad/s. The ∗∗∗∗ annotations push push push
+z
+indicate measurements with p-value<10−4. push speed. We also measured the survival rate, i.e., the
+percentage of the robot’s survival time within 30 minutes of a
+random walk. The result of the robustness test is summarized
+in Table III.
+In all methods, the robot mostly fell when there was
+Foot stumble a significant change in the command vector, requiring the
+robot to brake and alter its movement quickly. Nevertheless,
+DreamWaQ is significantly more robust than all the other
+methods, as quantitatively verified by the high survival rate
+Fig. 5: Estimation error of CENet and EstimatorNet. The superiority of
+and maximum push that it can withstand. The robust perfor-
+CENet is highlighted when the robot’s feet stumbled by stairs.
+mance was achieved through the interplay between accurate
+estimation and robust policy learning of DreamWaQ. More-
+barplot, as shown in Fig. 4. The significance of the improve- over, the proposed AdaBoot method also increases robustness
+ment obtained by DreamWaQ against other methods was without sacrificing the base performance.
+measured using paired t-test, as shown in Fig. 4, indicat- In the real world, DreamWaQ’s policy is robust against
+ing that DreamWaQ consistently outperforms the baselines. unstructured terrains. Fig. 6 shows the robot’s foot reflex
+Moreover, the proposed AdaBoot method also significantly when faced with foot stumbling and slipping. The robot can
+improved DreamWaQ, owing to its statistical bootstrapping immediately adapt its gait and stabilize its pose. Owing to
+strategy during training. the robust and accurate CENet, the robot had no problem in
+its body velocity estimation and could continue its journey
+E. Explicit Estimation Comparison
+without any performance deterioration.
+We simulated the robot walking in a stairs environment In Fig. 6(a), the robot exhibits different gaits for going
+to compare the CENet with EstimatorNet in terms of their downstairs and upstairs. When going downstairs, the robot
+squared estimation error, as shown in Fig. 5. In the normal tends to tilt its body closer to the ground and maintain its
+walk condition, CENet shows small errors on the flat terrain, front foot far from the body, which is a key gait pattern
+thanks to the forward-backward dynamics learning enabled for quickly finding a stable foothold. Meanwhile, the robot
+by the VAE’s auto-encoding mechanism. adapts its gait for going upstairs by significantly increasing
+The strength of CENet is highlighted when the robot stum- its footsteps. This gait is necessary so that the foot can safely
+bles down the stairs, where the EstimatorNet fails to estimate overcome the stairs and find a stable foothold while climbing.
+the body velocity accurately. In severe cases, inaccurate Moreover, Fig. 6(b) shows the adaptation to slipping, where
+estimation can lead to catastrophic failure. Conversely, the the robot can immediately detect irregular footholds and
+CENet can accurately estimate the body velocity, enabling adapt its gait pattern. Subsequently, the robot tries to recover
+the robot to climb the stairs safely. We hypothesize that this its normal pattern and continues to walk.
+is made possible by two factors: 1) the forward-backward
+dynamics learning provides more accurate estimation in all
+G. Long-Distance Walk
+terrains, and 2) using DreamWaQ, the encoder is jointly
+trained to predict the terrain properties; hence, it can im- We deployed the robot on two challenging outdoor courses
+plicitly reason about the terrain properties, which helps in to demonstrate the robustness of DreamWaQ. Course A was
+conditioning the explicit estimation. an on-campus yard consisting of many slopes and deformable
+terrains. Course B was an on-campus hill with an elevation
+F. Robustness Analysis
+gain of up to 22 m. Courses A and B have a total length of
+To test the learned policy’s robustness, we perturbed the 430 m and 465 m, respectively. The details of the courses are
+robot in the simulation with random pushes by applying shown in Fig. 7. The robot’s trajectory was measured using a
+random velocities with random directions along the x, y, and real-time kinematic (RTK) GPS [39] with a frequency of 10
+z axes of the robot’s body frame with a one-second interval Hz, mounted on top of the robot. For complete experiment
+until it fell. The random push velocities were uniformly videos, please refer to the project site1.
+
+===== PAGE 6 =====
+(a) elbmuts
+tooF
+pils
+tooF
+(a)
+Go downstairs Normal walk Climb upstairs Normal walk
+Normal walk
+(b)
+Normal walk Irregular foothold Adaptation Recovery
+Fig. 6: Foot reflex against uncertainties due to (a) stumbling and (b) slipping in unstructured terrains. Real-time experiment videos are available online1.
+A Start B Finish
+Finish
+Start
+Fig. 7: The outdoor trajectory for testing the performance of the DreamWaQ policy was recorded using an RTK–GPS mounted on the robot. Course A
+consists of many unstructured natural terrains in yards, while course B is a hiking track. The elevations of both courses relative to the starting point (in
+[m]) are shown in the color bars.
+1) Course A: The robot was challenged in unstructured to reduce the required torque. Due to the climbing operation,
+natural tracks with various slopes in this course. The robot the front legs’ motors may easily overheat, and the motor
+also encountered thick vegetation that trapped the robot’s enters the overheat protection mode. Nevertheless, using
+legs. However, the robot successfully adapted its speed by DreamWaQ, our robot could climb the hill, completing a 465
+increasing joint power to overcome the trap. m trajectory within 10 minutes and reach the hill’s summit1.
+The most challenging part of this course is walking
+through stairs and deformable slopes. Thanks to the robust-
+IV. CONCLUSION
+ness of the policy and accurate estimation of DreamWaQ, In this work, we introduced DreamWaQ, a robust
+the robot could safely walk through the stairs and slopes. quadrupedal locomotion framework that enables quadrupedal
+We conducted the experiments not only in dry but also in robots to traverse unstructured terrains by relying solely on
+wet terrain conditions after rainfall. While walking down the proprioception. DreamWaQ showed improved performance
+stairs, the robot faced slippery stairs. Moreover, the robot’s compared to existing learning-based controllers, and its
+feet stepped deeper to the ground on the slopes because of robustness was demonstrated on a Unitree A1 robot that
+the mud. Nevertheless, our robot, controlled by DreamWaQ, walked on hills and unstructured yards for approximately
+walked through the wet terrain without any difficulties1. ten minutes. DreamWaQ’s limitation lies in its adaptation
+2) Course B: Course B challenged the robot to climb mechanism, where it must first hit the obstacles with its
+a moderately high hill. This hiking track consists of man- legs. Addressing more complex structures, such as high-rise
+made asphalt terrain, gravel, and slopes. The experiments stairs, is a part of our future work, which requires integrating
+were conducted during summer, and the motors heated up exteroception into the locomotion system for improved gait
+quickly. Therefore, we commanded the robot to move slowly planning prior to obstacle contact.
+
+===== PAGE 7 =====
+REFERENCES [19] J. Lee, J. Hwangbo, L. Wellhausen, V. Koltun, and M. Hutter,
+“Learning quadrupedal locomotion over challenging terrain,” Science
+[1] M. Hutter, C. Gehring, D. Jud, A. Lauber, C. D. Bellicoso, V. Tsounis, Robotics, vol. 5, no. 47, p. eabc5986, 2020.
+J. Hwangbo, K. Bodie, P. Fankhauser, M. Bloesch, et al., “ANYmal – [20] A. Kumar, Z. Fu, D. Pathak, and J. Malik, “RMA: Rapid motor
+A highly mobile and dynamic quadrupedal robot,” in Proc. IEEE/RSJ adaptation for legged robots,” in Proc. Robotics: Science and Systems,
+international Conference on Intelligent Robots and Systems (IROS), 2021.
+2016, pp. 38–44. [21] Z. Fu, A. Kumar, J. Malik, and D. Pathak, “Minimizing energy
+[2] B. Katz, J. Di Carlo, and S. Kim, “Mini cheetah: A platform for consumption leads to the emergence of gaits in legged robots,” in
+pushing the limits of dynamic quadruped control,” in Proc. IEEE Proc. Conference on Robot Learning (CoRL), 2021, pp. 928–937.
+International Conference on Robotics and Automation (ICRA), 2019, [22] A. Escontrela, X. B. Peng, W. Yu, T. Zhang, A. Iscen, K. Goldberg,
+pp. 6295–6301. and P. Abbeel, “Adversarial motion priors make good substitutes for
+[3] Y.-H. Shin, S. Hong, S. Woo, J. Choe, H. Son, G. Kim, J.-H. Kim, complex reward functions,” arXiv:2203.15103, 2022.
+K. Lee, J. Hwangbo, and H.-W. Park, “Design of KAIST HOUND, a [23] G. B. Margolis, G. Yang, K. Paigwar, T. Chen, and P. Agrawal, “Rapid
+quadrupedrobotplatformforfastandefficientlocomotionwithmixed- locomotion via reinforcement learning,” in Proc. Robotics: Science
+integer nonlinear optimization of a gear train,” in Proc. International and Systems, 2022.
+Conference on Robotics and Automation (ICRA), 2022, pp. 6614– [24] G. Ji, J. Mun, H. Kim, and J. Hwangbo, “Concurrent training of a
+6620. control policy and a state estimator for dynamic and robust legged
+[4] C. Gehring, P. Fankhauser, L. Isler, R. Diethelm, S. Bachmann, locomotion,” IEEE Robotics and Automation Letters, vol. 7, no. 2, pp.
+M. Potz, L. Gerstenberg, and M. Hutter, “ANYmal in the field: 4630–4637, 2022.
+Solving industrial inspection of an offshore HVDC platform with a [25] A.Zhang,R.McAllister,R.Calandra,Y.Gal,andS.Levine,“Learning
+quadrupedal robot,” in Field and Service Robotics, G. Ishigami and invariant representations for reinforcement learning without recon-
+K. Yoshida, Eds. Singapore: Springer, 2021, ch. 16, pp. 247–260. struction,” in Proc. International Conference on Learning Represen-
+[5] M. Tranzatto, T. Miki, M. Dharmadhikari, L. Bernreiter, M. Kulkarni, tations (ICLR), 2021.
+F. Mascarich, O. Andersson, S. Khattak, M. Hutter, R. Siegwart, [26] “Unitree A1,” accessed on 2022.08.24. [Online]. Available: https:
+et al., “CERBERUS in the DARPA subterranean challenge,” Science //m.unitree.com/products/a1
+Robotics, vol. 7, no. 66, p. eabp9742, 2022. [27] D. Chen, B. Zhou, V. Koltun, and P. Krähenbühl, “Learning by
+[6] E. M. Lee, D. Seo, J. Jeon, and H. Myung, “QR-SCAN: Traversable cheating,” in Proc. Conference on Robot Learning (CoRL), 2020, pp.
+region scan for quadruped robot exploration using lightweight precom- 66–75.
+puted trajectory,” in Proc. 21st International Conference on Control, [28] L. Pinto, M. Andrychowicz, P. Welinder, W. Zaremba, and P. Abbeel,
+Automation and Systems (ICCAS), 2021, pp. 957–961. “Asymmetric actor critic for image-based robot learning,” in Proc.
+[7] Y. Kim, B. Yu, E. M. Lee, J.-H. Kim, H.-W. Park, and H. Myung, Robotics: Science and Systems, 2018.
+“STEP: State estimator for legged robots using a preintegrated foot [29] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov,
+velocity factor,” IEEE Robotics and Automation Letters, vol. 7, no. 2, “Proximal policy optimization algorithms,” arXiv:1707.06347, 2017.
+pp. 4456–4463, 2022. [30] J. Hwangbo, J. Lee, A. Dosovitskiy, D. Bellicoso, V. Tsounis,
+[8] M. Bloesch, C. Gehring, P. Fankhauser, M. Hutter, M. A. Hoepflinger, V. Koltun, and M. Hutter, “Learning agile and dynamic motor skills
+and R. Siegwart, “State estimation for legged robots on unstable for legged robots,” Science Robotics, vol. 4, no. 26, p. eaau5872, 2019.
+and slippery terrain,” in Proc. IEEE/RSJ International Conference on [31] D. P. Kingma and M. Welling, “Auto-encoding variational Bayes,”
+Intelligent Robots and Systems (IROS), 2013, pp. 6058–6064. arXiv:1312.6114, 2013.
+[32] I. Higgins, L. Matthey, A. Pal, C. Burgess, X. Glorot, M. Botvinick,
+[9] C. Gehring, C. D. Bellicoso, P. Fankhauser, S. Coros, and M. Hutter,
+S. Mohamed, and A. Lerchner, “β – VAE: Learning basic visual con-
+“Quadrupedal locomotion using trajectory optimization and hierarchi-
+cal whole body control,” in Proc. IEEE International Conference on cepts with a constrained variational framework,” in Proc. International
+Robotics and Automation (ICRA), 2017, pp. 4788–4794. Conference on Learning Representations (ICLR), 2017.
+[33] C. P. Burgess, I. Higgins, A. Pal, L. Matthey, N. Watters, G. Des-
+[10] C. D. Bellicoso, F. Jenelten, P. Fankhauser, C. Gehring, J. Hwangbo,
+jardins, and A. Lerchner, “Understanding disentangling in β – VAE,”
+and M. Hutter, “Dynamic locomotion and whole-body control for
+Advances in Neural Information Processing (NeurIPS) Workshop on
+quadrupedal robots,” in Proc. IEEE/RSJ International Conference on
+Learning Disentangled Representations, 2017.
+Intelligent Robots and Systems (IROS), 2017, pp. 3359–3365.
+[34] S. Kullback and R. A. Leibler, “On information and sufficiency,” The
+[11] F. Jenelten, R. Grandia, F. Farshidian, and M. Hutter, “TAMOLS:
+Annals of Mathematical Statistics, vol. 22, no. 1, pp. 79–86, 1951.
+Terrain-aware motion optimization for legged systems,” IEEE Trans-
+[35] D.-A. Clevert, T. Unterthiner, and S. Hochreiter, “Fast and accurate
+actions on Robotics, 2022, doi:10.1109/TRO.2022.3186804.
+deep network learning by exponential linear units (ELUs),” in Proc.
+[12] N. Rudin, D. Hoeller, P. Reist, and M. Hutter, “Learning to walk
+International Conference on Learning Representations (ICLR), 2016.
+in minutes using massively parallel deep reinforcement learning,” in
+[36] V. Makoviychuk, L. Wawrzyniak, Y. Guo, M. Lu, K. Storey, M. Mack-
+Proc. Conference on Robot Learning (CoRL), 2022, pp. 91–100.
+lin, D. Hoeller, N. Rudin, A. Allshire, A. Handa, et al., “Isaac
+[13] T. Miki, J. Lee, J. Hwangbo, L. Wellhausen, V. Koltun, and M. Hutter,
+Gym: High performance GPU-based physics simulation for robot
+“Learning robust perceptive locomotion for quadrupedal robots in the
+learning,” Advances in Neural Information Processing Systems, Track
+wild,” Science Robotics, vol. 7, no. 62, p. eabk2822, 2022.
+on Datasets and Benchmarks, 2021.
+[14] Z. Fu, A. Kumar, A. Agarwal, H. Qi, J. Malik, and D. Pathak,
+[37] D. P. Kingma and J. Ba, “Adam: A method for stochastic optimiza-
+“Coupling vision and proprioception for navigation of legged robots,”
+tion,” in Proc. International Conference on Learning Representations
+in Proc. IEEE/CVF Conference on Computer Vision and Pattern
+(ICLR), 2015.
+Recognition (CVPR), 2022, pp. 17273–17283.
+[38] X.B.Peng,E.Coumans,T.Zhang,T.-W.E.Lee,J.Tan,andS.Levine,
+[15] W. Yu, D. Jain, A. Escontrela, A. Iscen, P. Xu, E. Coumans, S. Ha,
+“Learning agile robotic locomotion skills by imitating animals,” in
+J. Tan, and T. Zhang, “Visual-locomotion: Learning to walk on
+Robotics: Science and Systems, 07 2020.
+complex terrains with vision,” in Proc. Conference on Robot Learning
+[39] “H-RTK F9P Helical GPS,” accessed on 2022.09.02. [Online].
+(CoRL), 2021, pp. 1291–1302.
+Available: http://www.holybro.com/product/h-rtk-f9p/
+[16] H. Lim, M. Oh, and H. Myung, “Patchwork: concentric zone-based
+region-wise ground segmentation with ground likelihood estimation
+using a 3D LiDAR sensor,” IEEE Robotics and Automation Letters,
+vol. 6, no. 4, pp. 6458–6465, 2021.
+[17] M. Oh, E. Jung, H. Lim, W. Song, S. Hu, E. M. Lee, J. Park, J. Kim,
+J. Lee, and H. Myung, “TRAVEL: Traversable ground and above-
+ground object segmentation using graph representation of 3D LiDAR
+scans,” IEEE Robotics and Automation Letters, vol. 7, no. 3, pp. 7255–
+7262, 2022.
+[18] S. Lee, H. Lim, and H. Myung, “Patchwork++: Fast and robust
+ground segmentation solving partial under-segmentation using 3D
+point cloud,” arXiv:2207.11919, 2022.

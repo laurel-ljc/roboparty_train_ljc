@@ -1,0 +1,529 @@
+===== PAGE 1 =====
+Learning Vision-Based Bipedal Locomotion for Challenging Terrain
+Helei Duan, Bikram Pandit, Mohitvishnu S. Gadde, Bart van Marum, Jeremy Dao, Chanho Kim, Alan Fern
+Abstract—Reinforcement learning (RL) for bipedal locomo-
+tion has recently demonstrated robust gaits over moderate
+terrains using only proprioceptive sensing. However, such blind
+controllers will fail in environments where robots must anticipate
+and adapt to local terrain, which requires visual perception. In
+this paper, we propose a fully-learned system that allows bipedal
+robots to react to local terrain while maintaining commanded
+travel speed and direction. Our approach first trains a controller
+in simulation using a heightmap expressed in the robot’s local
+frame. Next, data is collected in simulation to train a heightmap
+predictor, whose input is the history of depth images and
+robot states. We demonstrate that with appropriate domain
+randomization, this approach allows for successful sim-to-real
+transfer with no explicit pose estimation and no fine-tuning
+using real-world data. To the best of our knowledge, this is the
+first example of sim-to-real learning for vision-based bipedal
+locomotion over challenging terrains.
+I. INTRODUCTION
+A robot’s utility for useful work often hinges on its capacity
+to maneuver effectively across a spectrum of natural and
+structured terrains. For this purpose, bipedal robots have
+the potential to match human locomotion capabilities, but
+currently are far inferior. Approaching human performance
+requires a robot to perceive its surroundings, assess its states
+relative to the upcoming terrain, and dynamically adapt its
+gait. Robustly achieving such an integration of vision and
+Fig. 1: Our fully learned controller integrates vision and locomotion
+locomotion remains an open problem for bipedal robots.
+for reactive and agile gaits over terrains. The proposed approach
+Modern control approaches for vision-based legged loco-
+enables bipedal robot Cassie traversing over challenging terrains,
+motion [1–8] often decompose the problem into a control including random high blocks, stairs, 0.5m step up (∼60% leg
+hierarchy, requiring robust whole-body control, footstep length), with speed up to 1m/s.
+planning, accurate odometry estimation, and terrain mapping.
+challenging terrain. To the best of our knowledge, this is
+Each level requires a set of modeling assumptions in order to
+the first such successful demonstration. A distinctive aspect
+process high-dimensional and raw proprioceptive and visual
+of our approach is that it avoids the estimation of global
+exteroceptive information. On the other hand, recent learning-
+odometry, which can be particularly challenging for legged
+based approaches make fewer modeling assumptions, often
+locomotion due to estimation drifts from frequent contacts and
+learning a direct mapping from high-dimensional sensory
+aggressive motions. Instead, our approach learns to directly
+inputs to actuator commands. These approaches have shown
+combine proprioceptive and visual information in the robot’s
+strong empirical demonstrations of blind bipedal locomotion
+local frame to make control decisions. In particular, our
+[9] and vision-based quadrupedal locomotion [10–16] in real-
+architecture is composed of two primary learned components:
+world environments. However, they are typically trained in
+1) a control policy whose input is proprioceptive information
+simulation and their success relies on designing techniques
+and a heightmap of a local region in front of the robot (Section
+for reliable sim-to-real transfer, which can be particularly
+IV), and 2) a heightmap predictor, which uses proprioceptive
+challenging when vision is one of the input modalities.
+and egocentric depth images to predict a heightmap for the
+In this paper, we design and demonstrate a sim-to-real
+control policy (Section V). The key contribution of our work
+learning approach for vision-based bipedal locomotion over
+is the sim-to-real pipeline and the system integration for these
+components, which allows the overall locomotion controller
+*This work is supported by the NSF Award 2321851, NSF Award IIS-
+1849343 and DARPA Grant N66001-19-2-4035. to transfer successfully to the real world. In particular, we
+All authors are with Collaborative Robotics and Intelligent Sys- demonstrate the learned controller on a camera-equipped
+tems Institute, Oregon State University, Corvallis, Oregon, 97331,
+bipedal Cassie robot, which can traverse challenging terrains
+USA. Email: {duanh, panditb, gaddem, vanmarub, daoje,
+kimchanh, alan.fern}@oregonstate.edu. constructed in a lab environment shown in Figure 1.
+4202
+luJ
+8
+]OR.sc[
+2v49541.9032:viXra
+
+===== PAGE 2 =====
+II. RELATED WORK III. SYSTEM OVERVIEW
+Sim-to-Real Reinforcement Learning (RL) for Bipedal
+Robots. Recently, RL-based controllers for bipedal loco-
+motion have mostly focused on blind locomotion, where
+proprioception is the primary control input [17–20]. These
+works have produced controllers that can handle a limited
+amount of non-flat terrains. The learned policy [17] tends
+to have a high cost of transport due to aggressive gaits and
+high swing trajectories that are required to maintain balance
+without knowledge of the local terrain. When traversing over
+challenging terrains, gait adaptation is highly required, and
+visual information becomes critical at certain times during the
+gait [21, 22]. The research question then is how to incorporate Fig. 2: Overview of the locomotion policy with vision module.
+vision into RL policies so that bipedal robots can react to
+terrains and adapt their own gaits at the same time.
+Figure 2 illustrates our overall system, which has two
+Learning Vision-based Legged Locomotion. Previous main components: 1) a locomotion policy, which outputs
+work for quadrupedal robots has used RL methods to PD setpoints for the robot actuators based on proprioception,
+demonstrate successful sim-to-real transfer of vision-based lo- a local terrain heightmap, and user commands, and 2) a
+comotion controllers. One type of approach uses an elevation heightmap predictor, which outputs a predicted heightmap
+map or height scanners in the global reference frame as part based on proprioceptive information and images from a depth
+of the RL policy input. For example, scattered elevation scans camera. These components are learned in simulation and then
+around each foot are used in quadrupeds [11] and bipeds [23], transferred to the real robot.
+while other methods [13–15, 24] use a uniformly structured The training pipeline first uses RL to train the locomotion
+elevation map around the robot, both of which require multiple policy in simulation. This training process randomizes the
+sensors and careful calibration. In contrast, in this work we terrain, user commands, and physical parameters to help
+are interested in a solution that does not require careful with sim-to-real transfer. Next, using the learned policy,
+calibration for global odometry. A second type of approach the pipeline collects data from a simulated depth camera
+is to directly use vision inputs from a camera, such as depth attached to the robot, which is paired with ground-truth
+images [10, 13, 25, 26] or RGB images [27], as the inputs heightmap information to be used for supervised learning of
+to a RL policy. This end-to-end training is often carried the heightmap predictor. Training this predictor also involves
+out via teacher-student training [13, 26], which can exploit domain randomization and added noise to facilitate sim-to-
+the teacher’s access to privileged information in simulation. real transfer. Sections IV and V describe the architectural
+While these approaches have been successful on quadrupeds and training details of each component.
+on hardware, it is unclear how well they can work for bipeds
+in the real world, where the contact locations become critical IV. LEARNING A TERRAIN-AWARE LOCOMOTION POLICY
+for stability and unintended contact forces with the ground The main control objective is to follow speed and heading
+can much more easily tip over the robot. commands while maintaining balance over possibly challeng-
+Local Terrain Mapping for Legged Robots. Model-based ing terrains. Below, we describe the observation space, action
+terrain mapping techniques have shown successful deployment space, architecture of the policy, and training methods.
+onto hardware via odometry and fusion of multiple visual
+A. Control Policy Design
+sensors [28–30]. These techniques strongly rely on pose
+estimation of the floating base in the global frame, where Observation Space. The policy input includes: 1) proprio-
+the map can drift due to inaccuracies from pose estimation. ceptive information containing the orientation (in quaternion)
+Previous visual-based quadrupedal locomotion work [11] and angular velocity of the floating base, and position and
+reported that large amounts of domain randomization are velocity for all measurable actuated and unactuated joints,
+required to overcome the noises and drifts from such 2) terrain heightmap from a 1.5m by 1m area in front
+mapping techniques. On the other hand, recent learning- of the robot at a 5cm resolution (see Figure 4), which
+based techniques [31, 32] have shown promising results when encodes the ground height at each point relative to the robot’s
+reconstructing the terrains from multiple cameras, but the use floating base. The relative encoding means that the heights
+of robot global pose is still required. In this paper, our focus vary as the robot moves up and down during its gait, but
+is on responding to terrain changes in front of the robot, for enables us to avoid using global mapping and odometry
+which we use a single depth camera to provide an egocentric estimation techniques, 3) user commands, which include X
+view of the terrain. Along with robot states, the reconstructed and Y linear velocities along with direction and rotational
+heightmap is entirely in the robot’s local frame. Our method velocity around the robot’s yaw axis, and 4) periodic clock,
+removes the need to use global estimation when the robot as used in prior work on locomotion control [9], which
+has to react to local terrains rapidly. consists of two functions for each leg, sin(2π(ϕ + γi)) and
+t t
+
+===== PAGE 3 =====
+policy. These privileged inputs include the robot height and
+feet positions in the global frame, a square 0.5m heightmap
+around each foot, and two rangefinder sensors from the tip of
+each foot. This privileged information provides the critic with
+a more accurate 3D picture around each foot, which helps it
+more accurately predict future rewards, such as unfavorable
+collision events with the terrain, as shown effective in [35].
+Training Episode Generation. Each training episode involves
+a randomly generated terrain map of size 20m x 20m. Each
+Fig. 3: Policy consists of a blind policy and a vision-based modulator. map is one of 5 terrain types, illustrated in Figure 4, that
+are reflective of different human-centric environments. These
+cos(2π(ϕ + γi)). Here i ∈ [left, right] indicates the leg, ϕ is
+t t include: 1) flat - the easiest terrain with no features, 2) hills -
+a monotonically increasing phase variable that is incremented
+a smoothly varying heightmap, 3) blocks - randomly located
+as ϕ = ϕ + ∆ϕ , so that ∆ϕ varies the gait frequency,
+t+1 t t t blocks of random lengths, widths, and heights, 4) ridges - a
+and [γleft,γright] are period shifts that alter the clock values
+t t sequence of random width and height ridges that span the
+for each leg, thus changing the contact sequence.
+length of the map, and 5) stairs - upward and downward
+Action Space. The RL policy operates at 50Hz and outputs
+stairs of varying width and height. The randomization
+PD setpoints for all motors, which are provided to a PD
+parameters of each terrain type are listed in Table 4, and
+controller operating at 2kHz. To enable gaits that can more
+terrains are generated in a way to avoid intersecting features.
+flexibly adapt to the terrain, the RL policy also outputs
+Each episode selects a single terrain type according to the
+three extra values, representing the clock increment ∆ϕ
+t following probability distribution [0.03,0.07,0.35,0.2,0.35],
+and residuals of shifts for both legs [∆γleft,∆γright].
+t t which puts the majority of the probability mass on the three
+Policy Architecture. We use a neural network to represent
+most difficult terrains. This allows the policy to gain some
+the policy for mapping observation sequences to actions. The
+experience on easier terrains, which is useful early in learning,
+policy architecture (Figure 3) contains two main components,
+but focuses most of the learning effort on more difficult terrain
+a pretrained blind policy and a vision-based modulator. The
+that requires careful integration of vision and locomotion.
+architecture motivation is for the blind policy to provide a
+We found the key to train a robustness and non-aggressive
+baseline locomotion control signal, which is effective for
+control policy relies on the terrain generation distribution
+moderate terrains. For more complex terrain, the vision-based
+rather than iterating and adding heuristic-based reward terms.
+modulator is then able to adjust the baseline control based
+For example, stairs naturally regulate the step length and
+on details of the local terrain.
+ridges regulate step height via the heightmap representation.
+The blind policy is based on prior work [9] and uses an
+Given a terrain map, each training episode starts with
+LSTM network to produce actions. This policy uses all of the
+the robot being randomly spawned in a standing position
+available inputs, except for the heightmap information, and is
+near the center of the map and facing a random direction.
+trained on relatively flat ground with various gait frequencies
+Next a random command is given to the policy from a list
+and shifts. The resulting policy is robust to moderate dis-
+including: step-in-place, step-in-place-turn, walk, walk-turn,
+turbances. The input to the vision-based modulator includes
+with a sampling probability of [0.05, 0.05, 0.6, 0.3]. The
+all of the available observations, including the heightmap,
+commanded X, Y, and turn velocities are uniformly sampled
+in addition to the action produced by the blind policy. This
+from the ranges [-0.5, 1.0]m/s, [-0.3, 0.3]m/s, and [-22.5,
+modulator outputs a “modulating action” as well as clock
+22.5] degrees/s, respectively. When the robot is on the ridge,
+actions to modify the clock parameters.
+stair, or block terrain types, the velocity commands exclude
+backward and sideways movement, due to using only a single
+B. Policy Training
+forward facing camera. After the initial command, once during
+The policy is trained via the PPO actor-critic RL algorithm each episode the command is randomly changed at a time
+[33] in a MuJoCo simulation environment [34] where the randomly sampled from [200, 250] timesteps.
+robot aims to follow randomized commands over randomized Each episode runs for a maximum of 400 timesteps, which
+terrains. The training is conducted using 80 cores on a dual is 8 seconds of simulated time. Episode termination conditions
+Intel Xeon Platinum 8280 server on the Intel vLab Cluster. include: 1) roll or pitch angle of the floating base is greater
+We used two modifications to standard PPO that helped speed than 15 degrees; 2) the norm of linear velocities of the base is
+up and stabilize learning. First, we modified the PPO loss greater than 1 plus the commanded velocity; 3) the robot base
+function to include a mirror loss over robot propriocepive height is below 40cm from robot base to terrain; 4) the robot’s
+inputs as well as visual inputs. This loss encourages the policy body collides with the terrain. The conditions correspond to
+to choose symmetric actions when facing the same terrain that undesirable robot behavior and implicitly punish the robot
+is symmetrically mirrored about the saggital plane. Second, by causing it to not receive future rewards.
+since our reward function (described below) uses privileged Reward Function. Our reward function aims to produce a gait
+information, we found it useful to provide the critic with with a well regulated contact sequence that is able to traverse
+privileged inputs on addition to the observations input to the the simulated environment in a way that is likely to transfer to
+
+===== PAGE 4 =====
+TABLE I: Ranges for terrain randomization used in training and TABLE II: Parameters and ranges used in domain randomization.
+evaluation. All terrains are uniformly sampled within the range All parameters are uniformly sampled within the range.
+during training or evaluation.
+Parameters Range Unit
+Range for Evaluation Joint Damping [0.5, 2.5] %
+Terrain Parameter Range Easy Hard Mass [-0.25, 0.25] %
+Simulation Center of Mass Location [-0.01, 0.01] m
+Ridge height [m] [0.05, 0.6] [0.05, 0.5] [0.5, 0.6]
+Model Passive Spring Stiffness [-500, 500] Nm/rad
+height [m] [0.05, 0.2] [0.05, 0.1] [0.1, 0.2] Torque Efficiency [0.9, 1.0] %
+Stair length [m] [0.25, 0.4] [0.4, 0.4] [0.25, 0.4] Torque Delay [0.5, 3] ms
+steps [4, 28] [4, 12] [12, 28] [-0.05, 0.05] per episode
+Shift in XY m
+Block length or [0.4, 1] [1, 1] [0.4, 1] Heightmap [ [ - - 0 0 . . 0 1 5 , , 0 0 .1 .0 ] 5 p ] er pe e r pi p s o o l d ic e y step
+width Shift in Z m
+[-0.02, 0.02] per policy step
+height [m] [0.05, 0.4] [0.05, 0.2] [0.2, 0.4]
+Delay [20, 100] ms
+tion, shown in Table II, over model parameters, actuation
+parameters, visual inputs, and delays. The model parameters
+are randomized per episode to simulate a range of robot
+models and also provide a wide range of state space that
+the policy can learn from. We found that randomizing the
+torque efficiency parameter is particularly important for sim-
+to-real on extreme terrain, such as a 0.5m step up, due to the
+torque saturation of the knee motor. In addition, the torque
+command sent to the simulator is delayed randomly up to
+3ms. The visual inputs are randomized to simulate noise from
+the heightmap estimator and prevent the policy from over-
+fitting to the exact simulated heightmaps. Prior work [11]
+based on teacher-student training also found that heightmap
+randomization was important for sim-to-real transfer. The
+Fig. 4: Types of terrain used in training. entire heightmap is shifted per episode and policy step in
+all directions to simulate temporal noises. The heightmap is
+a real robot. In particular, we use a three component reward
+passed into the policy with a randomized amount of delay up
+function where all components are weighted equally, R =
+to 100ms, in order to account for faster locomotion speeds.
+R +R +R . The base locomotion component R is
+0 accel collision 0
+the reward function used in prior work on blind locomotion V. HEIGHTMAP PREDICTION FROM EGOCENTRIC VISION
+[9], which regulates the contact sequence and timing. This
+The heightmap predictor is a neural network that maps a
+reward component encourages alternating swing and stance
+history of egocentric depth images and robot states into an
+phases to align with the clock values provided to the policy.
+estimated heightmap in front of the robot. This problem is
+Besides the base locomotion reward, we identified addi-
+challenging due to the aggressive camera motions, occlusions,
+tional components as being important for facilitating sim-
+and noisy images. Below, we describe the architecture and
+to-real transfer for complex terrains. The foot acceleration
+simulation-based training process used to achieve successful
+component R penalizes the left and right foot accel-
+accel sim-to-real transfer.
+erations x¨ and x¨ . This reward helps prevent fast swing
+l r
+leg motions, which we found could arise during training
+on difficult terrain. Specifically, the reward is defined as
+R = 0.05exp(−0.02 · (∥x¨ ∥ + ∥x¨ ∥)), which provides
+accel l r
+a more positive reward for smaller accelerations. The foot
+collision component R adds a negative penalty of -5
+collision
+whenever the forefront of the foot is stumbled by the terrain,
+which helps to achieve collision-free leg-swing trajectories.
+However, due to the nature of RL, this term only acts as
+a soft constraint that the robot may violate in favor of not
+falling down, in order to collect more reward throughout
+the training episode. We found training without this penalty
+term can work in simulation, but results in significantly more Fig. 5: Predictor architecture. Heightmap is captured from hardware.
+frequent foot stumble and collision events, and subsequently Network Architecture and Losses Figure 5 shows the
+prevents sim-to-real transfer. Touch sensors are added at the network architecture, which consists of two stages. For the
+forefront of each foot’s collision model to detect collision first stage, we use an LSTM network so that the memory
+events and trigger the negative reward. can help reconstruct missing information from the history of
+Domain Randomization. To enable successful sim-to-real robot states and depth images. Training of this stage is done
+transfer and diversify the data distribution during training, by minimizing the mean-squared error to the ground truth
+the training process involves a range of domain randomiza- heightmap with heights relative to the robot floating base.
+
+===== PAGE 5 =====
+We found that training just Stage 1 resulted in heightmaps
+with non-flat surfaces around corners and edges, which were
+difficult to correct via straightforward architecture and loss
+function modifications. To improve over the raw heightmaps,
+Stage 2 utilizes a U-Net architecture [36] which has shown
+to be effective in learning a pixel-to-pixel transformation.
+This stage takes in the raw heightmap and outputs a cleaned
+version of the same size. Stage 2 uses L1 loss and leads
+to a refined heightmap with sharper corners, edges, and flat
+surfaces.
+Simulation-Based Data Generation Given a trained locomo-
+tion control policy, we use the simulator to execute episodes Fig. 6: Depth image from simulation and real world, with corre-
+of the policy to collect training data. In particular we run sponding real predicted heightmap and simulation heightmap.
+the policy in stochastic mode, where the actions are sampled
+mode of terrains. For more difficult terrain modes, however,
+from the action distribution at each time step. This has the
+policies w/o Learned Clock and w/o Privilege Critic show
+effect of producing data around the typical data distribution
+significantly lower success rates. This means that control
+the policy will encounter at runtime. The dataset contains
+over the gait’s contact timing and sequence as well as a
+one trajectory for each policy-execution episode, where the
+more accurate value estimation improve policy performance
+trajectory at time t stores the robot state s , the depth image
+t over hard terrains. Episodes with foot collision shows that,
+I and the ground truth heightmap m . The range of domain
+t t compared to Ours, other policies have significantly more
+randomization is the same as it is during training. Simulation
+foot collisions events. These random foot collisions with
+model adds an egocentric camera to generate depth images at
+the terrain could lead to failures. Indeed, Terminations due
+each step. The pose is at the top of the floating-base and tilted
+to foot collision indicates that collisions account for most
+by 60 degrees from horizontal plane, giving the range of view
+failure cases overall. Although foot collisions lead to frequent
+of approximately 2.5m×2.5m in front of the robot, which is
+failures, policy w/o Foot Collision Reward has a similar
+sufficient for the size of heightmap. The depth images are
+success rate as Ours. When looking at policy w/o Foot
+rendered in MuJoCo with size of 848×480, and then resized
+Collision Reward in simulation, the policy learns to deal
+into 128×128. Robot states include feet positions in robot’s
+with collisions and treat the collisions as potentially useful
+local frame. The final training set contains 30,000 episodes.
+proprioceptive feedback when the robot touches terrains. For
+Depth Image Randomization Depth images from real
+example, the robot will walk up high step-ups by sliding the
+cameras are significantly more noisy than the clean depth
+foot along the vertical surface of the terrain. Blind policy
+images from simulated cameras. During the generation of
+has the most aggressive swing leg motions to account for
+training episodes we add a set of randomizations to the
+non-observable terrains and has the worst performance.
+generated depth images to help bridge the sim-to-real gap.
+First, the camera pose and field of view (FOV) are randomized B. Local Terrain Reconstruction
+per episode. Camera pose shift has a range of ±1 cm for We evaluated the heightmap predictor in simulation to
+XYZ and ±1 degree for pitch angle. FOV shift has a range of validate the quality of the reconstruction shown in Table III.
+±1 degree. After data collection, a post-processing step adds We also implemented other architectures to use for ablations,
+a set of random noises on top of the rendered depth images, including an MLP model and a transformer-based model, and
+including Gaussian noise, image rotation, edge noise, random they all have robot states and depth image as the input. A
+small objects on the image, and spot noise. Each type of key distinction among the model architectures is the history
+noise is included in an image with a probability of 0.3. We representation. LSTM has implicit history, Transformer has a
+found that this combination of depth image randomization fixed window size of 0.6 seconds to allow reasonable inference
+allowed sim-to-real for the learned predictor more effectively. during runtime, and MLP does not have history. Additionally,
+the comparison also includes an LSTM model, LSTM w/o
+VI. SIMULATION RESULTS
+robot states, that does not use robot states as input. Among
+A. Policy Performance
+all models, LSTM achieves the best reconstruction loss, likely
+We use the trained policy, along with a number of different benefited from the implicit representation on history which
+policy setups, to evaluate the performance in simulation for allows useful extraction from robot states with egocentric
+the ablation study. For each terrain we define an easy and a view. Without robot states as input, LSTM w/o robot states
+hard configuration as shown in Table I. For each policy setup, produces worse reconstructions, indicating the requirement
+we collect 1000 episodes per terrain mode and compute three of proprioception and vision together to accurately estimate
+metrics as shown in Figure 7-A. Ours is the policy trained local terrain.
+using all setups and is for sim-to-real. Other setups are for
+C. Closed-loop Evaluation
+controlled tests by removing one feature at a time. We also
+trained a blind policy across all terrains. In Success Rate, all We use each variation of the heightmap predictor to couple
+policies have approximately the same performance at easy with the policy (Ours in Figure 7-A) to evaluate the closed-
+
+===== PAGE 6 =====
+Fig. 7: A. Ablation study on policy with simulation heightmap. B. Ablation study on policy with different heightmap predictor architectures.
+Each ablation study uses data collected from a range of terrains defined in Table I. Success rate indicates the robot does not fall down for
+10 seconds of rollouts. Episodes with foot collision indicates the number of episodes that have one or more foot collision events occurred
+during rollouts, and such random collision events are unfavorable towards hardware deployment. Termination due to foot collision shows
+the percentage of foot collision events that lead to failures. All plots are evaluated with a confidence interval of 95%.
+TABLE III: Reconstruction loss with various heightmap predictors. communication delay, camera stream, and model inference.
+Model Architecture Reconstruction Loss (MAE) [cm] To create structured terrains similar to those in simulation
+LSTM 2.806 training, we built wooden blocks with various heights and
+Transformer 4.221 sizes in the lab environment shown in Figure 1.
+MLP 4.932
+LSTM (w/o robot states) 4.448 B. Evaluation
+We tested the proposed system over various terrains.
+loop performance in simulation shown in Figure 7-B. We
+Overall, the system is able to control robot Cassie going over
+use the same metrics used in policy performance. During
+single high blocks, stairs, and random blocks, with various
+each rollout, the predictor takes in the noisy depth images
+dimensions. Although the egocentric view of the camera
+from simulation rendering and the policy takes in the clean
+cannot look underneath the robot, we found the policy is able
+heightmap from the output of the Stage in Figure 5. In
+to go over terrains while reasoning about the swing trajectory
+Success Rate, all predictors produce similar performance over
+for the terrain underneath it. This observation potentially
+each terrain mode. This potentially means that, regardless of
+means that the policy keeps an internal odometry when
+the errors from reconstruction, the learned policy is robust
+approaching upcoming terrains. Also, the system enables
+enough to estimation noises. In Episodes with foot collision,
+the robot to go over a 0.5m high step-up, where the torque
+compared to LSTM, other models show worse performance
+saturation happens on the leading stance leg when lifting
+and produce more collision events. In Termination due to
+the entire robot up from lower ground to a high step. We
+foot collision, compared to LSTM, other models fails with
+also tested the learned system on a treadmill while a human
+higher chances from unfavorable foot collisions.
+operator continually fed random blocks down the treadmill.
+VII. SIM-TO-REAL TRANSFER The robot is able to go over the upcoming blocks and maintain
+travel speed and heading. Please refer to the submission video
+A. Experimental Setup
+for hardware demonstrations.
+We deployed the proposed system on the bipedal robot
+Cassie. To endow the vision system with fast inference, VIII. CONCLUSION
+we added a D455 Intel Realsense camera and an NVIDIA In this work, we proposed a fully learned visual-locomotion
+Jetson Orin Nano module on Cassie. Customized mount with system using neural networks. To deal with constrained
+camera is calibrated by matching depth images with simulated locomotion over complex terrains, we used simulation to
+images under the same robot pose. Depth images are post- train a robust control policy, considering adaptive gaits and
+processed with a hole-filling filter and distance clipping before collision-free swing leg. A vision module is trained using
+being sent into the heightmap predictor. The main control simulation-only data to convert an egocentric view from a
+policy is running on the robot’s main computer and inference single depth camera to a terrain heightmap in robot local
+of the heightmap predictor is running asynchronously on frame. The entire system ran onboard and achieved successful
+the Jetson. The camera depth stream is set to 90 FPS and sim-to-real transfer without the need for explicit odometry
+heightmap prediction inference alone can run at 200Hz. The estimation. We believe these key components are fundamental
+end-to-end delay between the main control policy and the to our study as well as future research on learning vision-
+heightmap predictor is measured up to 20ms, including UDP based dynamic locomotion for legged robots.
+
+===== PAGE 7 =====
+REFERENCES Multi-Task Reinforcement Learning,” 2 2023. [Online]. Available:
+http://arxiv.org/abs/2302.09450
+[21] J. S. Matthis and B. R. Fajen, “Humans exploit the biomechanics
+[1] R. Grandia, F. Jenelten, S. Yang, F. Farshidian, and M. Hutter, of bipedal gait during visually guided walking over complex terrain,”
+“Perceptive Locomotion Through Nonlinear Model-Predictive Control,” Proceedings of the Royal Society B: Biological Sciences, vol. 280, no.
+IEEE Transactions on Robotics, 8 2023. [Online]. Available: 1762, 2013.
+http://arxiv.org/abs/2208.08373 [22] J. J. GIBSON, “Visually Controlled Locomotion and Visual Orientation
+[2] P. Fankhauser, “Perceptive Locomotion for Legged Robots in Rough in Animals,” British Journal of Psychology, vol. 49, no. 3, pp.
+Terrain,” ETH Zurich, p. 177, 2018. 182–194, 8 1958. [Online]. Available: https://onlinelibrary.wiley.com/
+[3] A. Agrawal, S. Chen, A. Rai, and K. Sreenath, “Vision-Aided doi/10.1111/j.2044-8295.1958.tb00656.x
+Dynamic Quadrupedal Locomotion on Discrete Terrain Using [23] B. van Marum, M. Sabatelli, and H. Kasaei, “Learning Perceptive
+Motion Libraries,” Proceedings - IEEE International Conference on Bipedal Locomotion over Irregular Terrain,” Tech. Rep., 2023.
+Robotics and Automation, pp. 4708–4714, 2022. [Online]. Available: [Online]. Available: http://arxiv.org/abs/2304.07236
+http://arxiv.org/abs/2110.00891 [24] N. Rudin, D. Hoeller, P. Reist, and M. Hutter, “Learning to Walk in
+[4] R. Deits and R. Tedrake, “Footstep planning on uneven terrain Minutes Using Massively Parallel Deep Reinforcement Learning,” in
+with mixed-integer convex optimization,” IEEE-RAS International Proceedings of the 5th Conference on Robot Learning, ser. Proceedings
+Conference on Humanoid Robots, vol. 2015-Febru, pp. 279–286, 2015. of Machine Learning Research, A. Faust, D. Hsu, and G. Neumann,
+[5] R. J. Griffin, G. Wiedebach, S. McCrory, S. Bertrand, I. Lee, Eds., vol. 164. PMLR, 3 2022, pp. 91–100. [Online]. Available:
+and J. Pratt, “Footstep Planning for Autonomous Walking over https://proceedings.mlr.press/v164/rudin22a.html
+Rough Terrain,” IEEE-RAS International Conference on Humanoid [25] Z. Fu, A. Kumar, A. Agarwal, H. Qi, J. Malik, and D. Pathak,
+Robots, vol. 2019-Octob, pp. 9–16, 7 2019. [Online]. Available: “Coupling Vision and Proprioception for Navigation of Legged Robots,”
+http://arxiv.org/abs/1907.08673 Proceedings of the IEEE Computer Society Conference on Computer
+[6] C. Mastalli, I. Havoutis, M. Focchi, D. G. Caldwell, and C. Semini, Vision and Pattern Recognition, vol. 2022-June, pp. 17252–17262,
+“Motionplanningforquadrupedallocomotion:Coupledplanning,terrain 2022. [Online]. Available: http://arxiv.org/abs/2112.02094
+mapping, and whole-body control,” IEEE Transactions on Robotics, [26] Z. Zhuang, Z. Fu, J. Wang, C. Atkeson, S. Schwertfeger, C. Finn,
+vol. 36, no. 6, pp. 1635–1648, 2020. and H. Zhao, “Robot Parkour Learning,” Tech. Rep., 2023. [Online].
+[7] F. Jenelten, T. Miki, A. E. Vijayan, M. Bjelonic, and M. Hutter, “Per- Available: http://arxiv.org/abs/2309.05665
+ceptive Locomotion in Rough Terrain - Online Foothold Optimization,” [27] T. Haarnoja, B. Moran, G. Lever, S. H. Huang, D. Tirumala,
+IEEE Robotics and Automation Letters, vol. 5, no. 4, pp. 5370–5376, M. Wulfmeier, J. Humplik, S. Tunyasuvunakool, N. Y. Siegel,
+2020. R. Hafner, M. Bloesch, K. Hartikainen, A. Byravan, L. Hasenclever,
+[8] S. Gangapurwala, M. Geisert, R. Orsolino, M. Fallon, and Y. Tassa, F. Sadeghi, N. Batchelor, F. Casarini, S. Saliceti, C. Game,
+I. Havoutis, “RLOC: Terrain-Aware Legged Locomotion Using N. Sreendra, K. Patel, M. Gwira, A. Huber, N. Hurley, F. Nori,
+Reinforcement Learning and Optimal Control,” IEEE Transactions on R. Hadsell, and N. Heess, “Learning Agile Soccer Skills for a
+Robotics, vol. 38, no. 5, pp. 2908–2927, 2022. [Online]. Available: Bipedal Robot with Deep Reinforcement Learning,” 4 2023. [Online].
+http://arxiv.org/abs/2012.03094 Available: http://arxiv.org/abs/2304.13653
+[9] J. Siekmann, Y. Godse, A. Fern, and J. Hurst, “Sim-to-Real Learning of [28] P. Fankhauser and M. Hutter, “A universal grid map library: Im-
+All Common Bipedal Gaits via Periodic Reward Composition,” 2021, plementation and use case for rough terrain navigation,” Studies in
+pp. 7309–7315. [Online]. Available: http://arxiv.org/abs/2011.01387 Computational Intelligence, vol. 625, no. October 2017, pp. 99–120,
+[10] W. Yu, D. Jain, A. Escontrela, and A. Iscen, “Visual-Locomotion : 2016.
+Learning to Walk on Complex Terrains with Vision,” 5th Conference [29] P. Fankhauser, M. Bloesch, and M. Hutter, “Probabilistic Terrain
+on Robot Learning (CoRL 2021), no. CoRL 2021, pp. 1–12, 2021. Mapping for Mobile Robots With Uncertain Localization,” IEEE
+[11] T. Miki, J. Lee, J. Hwangbo, L. Wellhausen, V. Koltun, and M. Hutter, Robotics and Automation Letters, vol. 3, no. 4, pp. 3019–3026, 10 2018.
+“Learning robust perceptive locomotion for quadrupedal robots in the [Online]. Available: https://ieeexplore.ieee.org/document/8392399/
+wild,” Science Robotics, vol. 7, no. 62, p. eabk2822, 2022. [30] C. Plagemann, S. Mischke, S. Prentice, K. Kersting, N. Roy, and
+[12] G. B. Margolis, T. Chen, K. Paigwar, X. Fu, D. Kim, S. Kim, and W. Burgard, “A bayesian regression approach to terrain mapping and
+P. Agrawal, “Learning to Jump from Pixels,” no. CoRL 2021, pp. an application to legged robor locomotion,” Journal of Field Robotics,
+1–10, 2021. [Online]. Available: http://arxiv.org/abs/2110.15344 vol. 26, no. 10, pp. 789–811, 10 2009.
+[13] A. Agarwal, A. Kumar, J. Malik, and D. Pathak, “Legged Locomotion [31] D. Hoeller, N. Rudin, C. Choy, A. Anandkumar, and M. Hutter,
+in Challenging Terrains using Egocentric Vision,” 11 2022. [Online]. “Neural Scene Representation for Locomotion on Structured Terrain,”
+Available: http://arxiv.org/abs/2211.07638 IEEE Robotics and Automation Letters, vol. 7, no. 4, pp. 8667–8674,
+[14] N. Rudin, D. Hoeller, M. Bjelonic, and M. Hutter, “Advanced 6 2022. [Online]. Available: http://arxiv.org/abs/2206.08077
+Skills by Learning Locomotion and Local Navigation End-to-End,” [32] B. Yang, Q. Zhang, R. Geng, L. Wang, and M. Liu, “Real-Time
+IEEE International Conference on Intelligent Robots and Systems,
+Neural Dense Elevation Mapping for Urban Terrain with Uncertainty
+vol. 2022-Octob, pp. 2497–2503, 9 2022. [Online]. Available: Estimations,” IEEE Robotics and Automation Letters, vol. 8, no. 2, pp.
+http://arxiv.org/abs/2209.12827 696–703, 2 2023.
+[15] D. Hoeller, N. Rudin, D. Sako, and M. Hutter, “ANYmal Parkour: [33] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov,
+Learning Agile Navigation for Quadrupedal Robots,” 6 2023. [Online]. “Proximal Policy Optimization Algorithms,” pp. 1–12, 2017. [Online].
+Available: http://arxiv.org/abs/2306.14874 Available: http://arxiv.org/abs/1707.06347
+[16] A. Loquercio, A. Kumar, and J. Malik, “Learning Visual Locomotion [34] E. Todorov, T. Erez, and Y. Tassa, “MuJoCo: A physics engine for
+with Cross-Modal Supervision,” Tech. Rep., 2022. [Online]. Available: model-based control,” IEEE International Conference on Intelligent
+http://arxiv.org/abs/2211.03785 Robots and Systems, pp. 5026–5033, 2012.
+[17] J. Siekmann, K. Green, J. Warila, A. Fern, and J. Hurst, “Blind Bipedal [35] Y. Ma, F. Farshidian, and M. Hutter, “Learning Arm-Assisted Fall
+Stair Traversal via Sim-to-Real Reinforcement Learning,” Robotics: Damage Reduction and Recovery for Legged Mobile Manipulators,”
+Science and Systems, 2021. IEEE International Conference on Robotics and Automation, 2023, 3
+[18] H. Duan, A. Malik, M. S. Gadde, J. Dao, A. Fern, and J. Hurst, 2023. [Online]. Available: http://arxiv.org/abs/2303.05486
+“Learning Dynamic Bipedal Walking Across Stepping Stones,” [36] O. Ronneberger, P. Fischer, and T. Brox, “U-net: Convolutional
+IEEE International Conference on Intelligent Robots and Systems, networks for biomedical image segmentation,” MICCAI 2015, vol.
+vol. 2022-Octob, pp. 6746–6752, 5 2022. [Online]. Available: 9351, pp. 234–241, 2015.
+http://arxiv.org/abs/2205.01807
+[19] G. A. Castillo, B. Weng, W. Zhang, and A. Hereid, “Robust Feedback
+Motion Policy Design Using Reinforcement Learning on a 3D
+Digit Bipedal Robot,” IEEE International Conference on Intelligent
+Robots and Systems, pp. 5136–5143, 2021. [Online]. Available:
+http://arxiv.org/abs/2103.15309
+[20] Z. Li, X. B. Peng, P. Abbeel, S. Levine, G. Berseth, and
+K. Sreenath, “Robust and Versatile Bipedal Jumping Control through

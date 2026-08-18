@@ -1,0 +1,567 @@
+===== PAGE 1 =====
+No More Blind Spots: Learning Vision-Based Omnidirectional Bipedal
+Locomotion for Challenging Terrain
+Mohitvishnu S. Gadde, Pranay Dugar, Ashish Malik, Alan Fern
+Abstract—Effective bipedal locomotion in dynamic environ-
+ments, such as cluttered indoor spaces or uneven terrain,
+requires agile and adaptive movement in all directions. This
+necessitates omnidirectional terrain sensing and a controller
+capable of processing such input. We present a learning frame-
+work for vision-based omnidirectional bipedal locomotion, en-
+abling seamless movement using depth images. A key challenge
+is the high computational cost of rendering omnidirectional
+depth images in simulation, making traditional sim-to-real
+reinforcement learning (RL) impractical. Our method combines
+a robust blind controller with a teacher policy that supervises a
+vision-based student policy, trained on noise-augmented terrain
+data to avoid rendering costs during RL and ensure robustness.
+We also introduce a data augmentation technique for supervised
+student training, accelerating training by up to 10 times
+compared to conventional methods. Our framework is vali-
+dated through simulation and real-world tests, demonstrating
+effective omnidirectional locomotion with minimal reliance on
+expensive rendering. This is, to the best of our knowledge,
+the first demonstration of vision-based omnidirectional bipedal
+locomotion, showcasing its adaptability to diverse terrains.
+I. INTRODUCTION
+Legged locomotion has recently been a central objective of
+Fig. 1: The omni-direction robot locomotion controller is
+the robotics research community due to the capability of such
+trained in simulation via student-teacher learning to proac-
+robots to traverse across natural and unstructured terrains [1],
+tively adjust the gait to challenging terrain conditions based
+[2], [3], [4]. Over the past decade, learning-based approaches,
+on the input from 4 depth cameras. This controller is then
+particularly blind locomotion controllers, have demonstrated
+transferred to the real robot.
+remarkable progress in enabling stable walking and running
+across a variety of environments [5], [6]. These blind policies Training end-to-end vision-based locomotion controllers is
+capitalize on proprioceptive feedback to maintain balance notoriously challenging, particularly when using reinforce-
+and momentum, forming a strong foundation for real-world ment learning (RL), due to the high computational cost of
+deployment [7]. However, despite their robustness on well- simulating realistic visual inputs. Rendering depth or RGB
+modeled or homogeneous surfaces, blind controllers often images for complex environments is expensive [12], which
+struggle in the face of unforeseen obstacles or complex, slows training and limits throughput. These difficulties are
+uneven terrains. amplified in the omnidirectional setting, where the volume
+To address these limitations, recent research has focused of visual data increases by at least a factor of four, placing
+on vision-based locomotion controllers [8], [9], where exte- even greater demands on simulation and processing. In
+roceptive sensors such as cameras or depth sensors provide addition to rendering cost, sim-to-real transfer introduces
+crucial information about the environment. By analyzing further complexity: policies must be robust to real-world
+visual inputs, these controllers adapt to the changes in noise, actuator delays, and the absence of privileged infor-
+terrain and proactively adjust foot placements [10], thereby mation often used during training. While most prior work on
+improving stability and efficiency. Although such vision- vision-based bipedal locomotion has focused on forward [13]
+based methods enable new possibilities for agile and adaptive or constrained directional movement to simplify perception
+movement, they also introduce challenges in perception, sim- and control, practical applications demand omnidirectional
+to-real transfer, and high-dimensional policy learning [11]. agility, posing a significant challenge for scalable training
+and deployment of vision-based policies [14].
+*This work is supported by NSF Award 2321851, DARPA contract To address these challenges, we propose a novel frame-
+HR0011-24-9-0423, and the NVIDIA Academic Grant Program. work for vision-based omnidirectional bipedal locomotion
+All authors are associated with Collaborative Robotics and Intelligent
+that balances computational efficiency with robust real-
+Systems Institute, Oregon State University, Corvallis, OR 97331.
+{gaddem, dugarp, malikas, alan.fern}@oregonstate.edu world performance. The framework is explicitly designed
+6202
+raM
+61
+]OR.sc[
+2v92911.8052:viXra
+
+===== PAGE 2 =====
+to minimize reliance on computationally expensive depth foot placements. This limitation often results in suboptimal
+rendering during training. It achieves this through three key locomotion performance and requires excessive corrective
+strategies. First, we initialize training with a stable, pre- inputs to traverse such environments to avoid failures. Vision-
+trained blind locomotion policy that provides basic balance based locomotion has been explored as a means to provide
+and movement capabilities, serving as a reliable backbone exteroceptive sensing to address these challenges, allowing
+for the vision-based controller. Second, we employ a student- these legged robots to perceive and interpret the terrain
+teacher distillation approach enhanced with DAGGER [15], features and traverse varying terrain. .
+where a privileged teacher policy is trained via simulation-
+B. Vision-Based Legged Locomotion
+intensive reinforcement learning using low-cost height maps
+and environment state information. The vision-based student Vision-based locomotion has been extensively researched
+then learns from this teacher through supervised imitation, for quadrupedal robots [17], [1], [3], [4] and, to a lesser
+using rendered depth images only for the student policy. extent, for bipedal robots [13], [14]. These methods typically
+Third, we introduce a data augmentation technique during use RL to train and demonstrate sim-to-real transfer of
+student training that significantly increases the effective these vision-based locomotion controllers. Elevation maps
+training set without additional rendering. Together, these or height scans in the global frame of reference have been
+components enable efficient training of vision-aware omnidi- used as the observed perceptive input to train the RL policy.
+rectional policies within practical time and resource budgets. For example, bipedal robots[13] and quadrupedal robots[18],
+Our experimental results demonstrate that our proposed [19], [20], [21] utilize these height map scans around each
+framework leads to significantly faster training than con- foot. While several other approaches [18], [19] employ a
+ventional approaches while maintaining competitive per- uniformly structured elevation map that is centered at the
+formance in both simulation and real-world scenarios. In robot frame. By assuming the availability of height maps at
+summary, the key contributions of this work are as follows: test time, simulation-based training is able to avoid expensive
+rendering of image and depth data, making training via RL
+• We present, to the best of our knowledge, the first
+practical. However, this assumption requires careful sensor
+framework for robust, vision-guided omnidirectional
+calibration and robust height map estimation to maintain con-
+bipedal locomotion.
+sistency between the simulated experience and real-world.
+• We propose an instantiation of student-teacher training
+In contrast, we are interested in a solution that does not
+specifically targeted at reducing the impractical over-
+require careful calibration for global odometry or direct
+head of directly training with depth rendering in the
+estimation of local elevation maps. This is motivated by
+reinforcement-learning loop.
+the additional complexity of such calibration and estimation
+• We propose an innovative data augmentation strategy
+in the omnidirectional setting, where multiple cameras are
+during student training, where duplicating data buffers
+typically involved (4 in our experiments). Prior work has con-
+and varying velocity commands enhances dataset di-
+sidered learning quadruped locomotion policies that directly
+versity at a minimal additional computational cost.
+use vision input from cameras, including depth images [20],
+This approach reduces rendering overhead and short-
+[21] and RGB images [22]. This type of end-to-end training
+ens overall training time, while improving the policy’s
+is often carried out via teacher-student approaches [23], [17],
+generalization to real-world scenarios.
+[1], [3], [4], where the teacher model benefits from the priv-
+II. RELATED WORK ileged information in the simulation to enhance policy learn-
+ing. These methods have demonstrated success in deploying
+A. Reinforcement Learning (RL) for Bipedal Robots
+these RL-trained policies on quadrupedal robots in real-world
+In recent years, RL-based controllers have been exten- scenarios. However, they have yet to be demonstrated on
+sively researched for legged locomotion [7], [16], [5]. These the more difficult problem of bipedal locomotion. Our work
+controllers are usually trained in simulation using model-free expands on these end-to-end student-teacher approaches to
+RL approaches, which leverage the robot’s proprioception, make them practical for the more computationally intensive
+enabling legged robots to traverse various terrains without training of bipedal locomotion.
+taking any explicit gait input to achieve locomotion. How-
+ever, despite the advances, these blind locomotion policies III. TRAINING AN OMNIDIRECTIONAL TERRAIN-AWARE
+primarily rely upon the proprioceptive feedback from the
+LOCOMOTION POLICY
+robot to learn a policy that is able to achieve stability We formulate the omnidirectional terrain-aware locomo-
+and maintain balance during locomotion in the presence tion problem as a Markov Decision Process (MDP), defined
+of moderate disturbances. This allows for locomotion on by the tuple M = (S,A,T,r,γ), where the state space
+well-structured surfaces with limited amounts of ground and S consists of the robot’s proprioceptive and exteroceptive
+external disturbances. observations, including joint positions, velocities, base orien-
+Unfortunately, blind RL-based locomotion controllers tation, linear and angular velocities, and terrain-related sen-
+struggle with unknown obstacles and significant terrain vari- sory inputs such as height maps or depth inputs. The action
+ations as they cannot sense or anticipate the changes in space A represents low-level motor control commands. T
+the environment they are operating under before making represents the system transition function. The agent receives
+
+===== PAGE 3 =====
+Fig. 2: Hierarchical network architecture for proposed vision-based omnidirectional locomotion control. (A) The policy
+consists of a frozen pretrained blind policy that outputs a base action, and a trainable modulator conditioned on perception
+to produce a modulating action. The final action is the sum of both outputs. (B) The teacher model uses privileged height map
+encoded by an MLP. (C) The student model uses egocentric multi-view images processed by a ResNet-18-based encoder.
+a reward r(s ,a ) at each time step to encourage stable to avoid rendering during teacher training. In particular, the
+t t
+and efficient locomotion, with reward terms designed to teacher has access to easily available height map, which
+promote following commanded velocity, minimizing energy requires minimal computational overhead. It is only during
+consumption, maintaining balance, and successfully travers- student training that depth map rendering is included in
+ing terrains. The objective is to learn a policy π(a |s ) the simulation loop. Our approach additionally enhances the
+t t
+that maximizes the expected cumulative reward J(π) = student-teacher framework in two ways to further improve
+(cid:104) (cid:105)
+E (cid:80)T γtr(s ,a ) , where γ is the discount factor bal- the cost of training. First, we use a hierarchical policy archi-
+t=0 t t
+tecture that leverages a pre-trained blind policy for both the
+ancing immediate and future rewards.
+student and teacher. Second, we develop a data augmentation
+A. Approach Overview approach during student training that effectively multiplies
+the amount of training data without additional rendering or
+Training bipedal locomotion controllers via RL requires
+simulations. Below, we describe the details of the policy
+extensive simulation experience. While this has been prac-
+architecture and the student-teacher training approach.
+tical for blind locomotion, the computational cost of simu-
+lation becomes impractical when visual rendering must be B. Policy Architectures
+done in the RL loop. Thus, our approach is designed to The student and teacher policies share a nearly identical
+minimize the amount of rendering done in simulation during neural network architecture, differing only in the input blocks
+training. In particular, we enhance the popular student- used for visual perception. Below, we first describe the
+teacher framework that has been used successfully in prior observation space and the shared policy architecture, which
+robotics work, including quadruped locomotion [23], [17], assumes a generic visual input encoding. We then detail the
+[1], [3], [4], [24], manipulation [25], [26], [27], [28], and specific vision encoders used by the teacher and student,
+self-driving [29], [30], [31]. corresponding to privileged height maps and egocentric depth
+The general student-teacher approach first trains a teacher maps, respectively.
+policy via simulation-intensive RL using privileged informa- 1) Observation and Action Spaces: Both student and
+tion, which is typically intended to decrease the difficulty teacher policies are trained to operate using a combination
+of learning. Next, a student policy is trained to mimic of the robot’s proprioceptive state, perceptual representation
+the teacher policy without using privileged information, but of surrounding terrain, and user-specified control commands,
+rather input information that will be available at test time. which are described as follows:
+Importantly, student training is fundamentally a supervised • Robot proprioceptive state: This includes the position
+learning problem, which avoids the simulation-intensive ex- and velocity of all the measurable actuated and un-
+ploratory learning process of RL. actuated joints, along with the orientation (in quater-
+In this work, we instantiate the student-teacher framework nion) and angular velocity of the floating base.
+
+===== PAGE 4 =====
+• Perceptive input: This includes information about the ings are concatenated and passed through a final single-
+local terrain around the robot. The teacher policy uses layer MLP to get a single 128-dimensional perceptual
+a privileged height map centered at the robot, while embedding.
+the student policy receives egocentric depth images • Differential Action Network: The encoded
+captured in real time from four cameras covering rect- proprioceptive-command vector, the perceptual
+angular regions around the robot. embedding, and the action output from the blind
+• User control commands: These define the robot’s target locomotion controller are concatenated to form
+motion and consist of desired linear velocities in the X a unified feature representation. This combined
+and Y directions, and angular velocity about the yaw representation is passed through a two-layer LSTM
+axis. network, each layer consisting of 128 hidden units.
+The LSTM captures temporal dependencies across
+The action space for both teacher and student policies are
+observation sequences and enables the policy to adapt
+the PD position setpoints for all 10 actuators (5 per leg).
+its behavior based on both proprioceptive and visual
+These setpoints are produced by our policy at 50Hz and
+feedback over time. The output of the LSTM is a
+processed by low-level PD controllers running at 2 kHz.
+differential action vector with the same dimensionality
+This setup ensures smooth, responsive execution of the high-
+as the action space.
+level actions produced by the network, enabling stable and
+adaptive locomotion across diverse terrains. • Action Output: The final action is computed by adding
+the differential action to the baseline action from the
+2) Network Architecture: Both policies follow a hybrid
+blind locomotion controller.
+neural network architecture that combines the action pro-
+duced by a pre-trained blind locomotion controller with a C. Privileged Teacher Training
+differential action computed by a network that depends on
+The teacher policy is trained using the Proximal Policy
+the perceptual input. This choice of architecture enables
+Optimization (PPO) actor-critic RL algorithm [32] in a Mu-
+both policies to leverage stable low-level locomotion skills
+JoCo simulation environment [33], where the robot aims to
+while adapting to complex terrains through visual feedback.
+follow randomized commands over diverse and randomized
+Intuitively, on moderate terrain the differential action can be
+terrains. The training is conducted using 120 cores on a
+nearly zero, since the blind policy is already effective, and
+dual Intel Xeon Platinum 8280 server on the Intel vLab
+need only adjust the blind policy action as necessary based
+Cluster. Below, we describe our training environment and the
+on the visual terrain input. The policy architecture is shown
+training episode generation, followed by our choice of reward
+in Figure 2 and includes the following components.
+function, and finally details of our PPO implementation.
+• Pre-Trained Blind Locomotion Controller: The blind
+locomotion policy is adapted from [16], which is a 2-
+layered LSTM network with 64 hidden units designed to
+learn robust locomotion using proprioceptive feedback.
+This policy is trained on relatively flat terrain to follow
+linear and angular velocity commands. . To enhance sta-
+bility and robustness, the training process incorporates
+external perturbations, allowing the robot to maintain
+stability and recover from disturbances during locomo-
+tion. This policy is pre-trained and remains frozen in
+our architecture during omnidirectional training.
+• Proprioceptive and Command Encoder: The robot’s
+joint positions and velocities, floating base states, and
+user-specified control commands are encoded using a
+Fig. 3: Various types of terrains used in training
+64-dimensional linear layer into a latent feature vector.
+• Teacher Vision Encoder: The teacher policy processes Training Episode Generation. Each training episode takes
+the four concatenated privileged height maps via a two- place on a randomly generated 30m × 30m terrain map,
+layer MLP with [256, 128] units per layer and ReLU drawn from one of five terrain types illustrated in Figure 3:
+activation functions resulting in a 128-dimensional per- (1) Flat – featureless terrain, (2) Hills – smoothly varying
+ceptual embedding. height maps, (3) Blocks – randomly placed blocks of varying
+• Student Vision Encoder: The student policy’s vision dimensions, (4) Ridges – sequential ridges with varying
+encoder is depicted in Figure 2-(C) . It first uses a width and height, and (5) Stairs – upward and downward
+shared parameter ResNet-18 convolutional network to stairs with varying step sizes. These terrain types are sampled
+independently encode each depth images captured from with probabilities [0.03, 0.07, 0.35, 0.20, 0.35], respectively.
+the four cameras. The encodings of each image are Randomization parameters are detailed in Table I, with care
+then projected into a 128-dimensional encoding using taken to avoid feature overlap.
+individual single-layer MLPs. Finally, all four encod- A small portion of episodes use flat and hilly terrains
+
+===== PAGE 5 =====
+TABLE I: Ranges for terrain randomization used in training
+• Foot Collision Penalty (R feet ): This term penalizes un-
+and evaluation. All terrains are uniformly sampled within the
+wanted collisions between the front tip of the foot and
+specified range.
+the terrain during swing. A penalty of −5 is applied
+for each such contact, which helps the policy learn to
+Terrain Parameter Train Range Easy Eval Hard Eval
+Ridge Height [m] [0.05, 0.6] [0.05, 0.5] [0.5, 0.6] lift the feet cleanly. Without this term, agents tend to
+Height [m] [0.05, 0.2] [0.05, 0.2] [0.2, 0.3] stumble, harming sim-to-real transfer. In simulation, we
+Stair Length [m] [0.25, 0.4] [0.4, 0.4] [0.25, 0.4] detect these events using contact sensors at the front of
+Steps [4, 28] [4, 12] [12, 28] each foot. These sensors are used only during training
+Len./Width [m] [0.4, 1.0] [1.0, 1.0] [0.4, 1.0]
+Block for reward computation and are not required at test time.
+Height [m] [0.05, 0.4] [0.05, 0.3] [0.3, 0.5]
+• Conrod Contact Penalty (R con ): To avoid unsafe leg
+to stabilize training, while the majority focus on blocks, configurations, especially during sideways or backward
+ridges, and stairs, which require more complex integration locomotion. This term penalizes contact between the
+of visual and proprioceptive feedback. We observe that robot’s conrods and the terrain. It helps the policy learn
+terrain diversity is more effective than reward tuning for to maintain safe leg posture and avoid dragging or
+encouraging robust, non-aggressive behaviors. For instance, scraping parts that could cause instability or physical
+omitting easier terrains leads to overly aggressive gaits, damage.
+while incorporating realistic variations in stair step length or PPO Modifications. To improve training stability, we in-
+ridge height encourages more natural step regulation through troduce two modifications to the standard PPO algorithm.
+perception. First, we modify the PPO loss to include a mirror loss
+The height map provided to the robot at each time step is over robot proprioceptive inputs as well as visual inputs.
+a 3m × 2m area centered on the robot. The map is rendered This loss encourages the policy to choose symmetric actions
+at 5cm resolution and encodes ground height relative to the when facing terrain that is symmetrically mirrored about
+robot’s floating base. This relative encoding supports terrain the sagittal plane. Second, since our reward function uses
+perception without requiring global localization or odometry, privileged information, we enhance the critic network by
+which are often unreliable in real-world settings. providing it with additional privileged inputs beyond those
+At the start of each episode, the robot is placed randomly available to the actor policy. These include the robot’s height
+near the center of the terrain in a standing pose, facing and foot positions in the global frame, a square 0.5m height
+a random direction. It is then given a randomly sampled map around each foot, and multiple rangefinder sensors on
+velocity command, drawn from the set: step-in-place, step- both legs, two in front of each foot, two on the sides, two at
+in-place-turn, walk, and walk-turn, with probabilities [0.05, the rear, and two on the conrods. These range measurements
+0.05, 0.60, 0.30]. A corresponding height command is also are used only by the critic to enhance terrain understanding
+provided. Velocity commands are sampled uniformly from around contact regions. These additional inputs improve the
+the following ranges: X velocity ∈ [−0.6,1.0]m/s, Y ve- critic’s ability to predict long-term reward, particularly for
+locity ∈ [−0.45,0.45]m/s, yaw rate ∈ [−22.5,22.5]deg/s, complex terrain interactions that are not fully observable
+and base height ∈ [0.4,0.95]m. To promote adaptation, the from proprioception or height maps alone.
+command is randomly modified once during the episode at
+D. Student Training
+a timestep between 200 and 250.
+Each episode runs for up to 450 timesteps (9 seconds The training process for the student policy largely mir-
+simulated). Early termination occurs if any of the following rors that of the teacher policy, including terrain generation,
+conditions are met: (1) The floating base roll or pitch exceeds sampling of velocity and height commands, and episode
+15 degrees, (2) The robot’s linear velocity norm exceeds termination conditions. However, unlike the teacher, which is
+1 plus the commanded velocity, (3) The base height drops trained via RL, the student policy is trained through policy
+below 40cm relative to terrain, and (4) The robot’s body distillation. Specifically, we follow the DAGGER training
+(excluding conrods and feet) collides with the terrain. strategy [15], where each episode is generated by using
+Reward Function. Our reward function is designed to the student (initially random) to select actions with the
+promote smooth, stable, and transferable bipedal locomotion privileged teacher being applied at each step to generate
+over complex terrain. It encourages clean contact transitions, supervisory training data. The student is trained via random
+discourages unsafe configurations, and supports robust gait mini-batches collected across the episodes to mimic the
+formation. The total reward is the sum of three equally teacher’s actions and perceptual encodings. In particular,
+weighted components: the student’s loss function includes two terms: 1) the mean
+squared error (MSE) between the teacher and student action,
+R = R + R + R
+0 feet con and 2) the MSE between the teacher’s perceptual encoding
+• Base Locomotion Reward (R 0 ): Adapted from [16], and the student’s encoding. We found that the second term
+this reward stabilizes a consistent alternating gait and helps accelerate learning by directly supervising the ResNet
+forms the foundation of both the blind controller and the image encoder to produce a representation that the teacher
+vision-based policy. It promotes agreement with target discovered during privileged training.
+commands, balance, and regular stepping. Note that since the student requires depth renderings for
+
+===== PAGE 6 =====
+TABLE II: Parameters and ranges used in domain random-
+where torque saturation of the knee motor can otherwise limit
+ization. All values are uniformly sampled within the range.
+performance. Actuation delays are also introduced by ran-
+domly delaying torque commands by up to 3 milliseconds.
+Parameter Range Unit
+Mass [-0.25, 0.25] % Visual input perturbations are introduced to prevent the
+COM Location [-0.01, 0.01] m policy from overfitting to simulation-generated terrain rep-
+Spring Stiffness [-500, 500] Nm/rad resentations. The height map is spatially shifted per episode
+Sim Model
+Torque Efficiency [0.9, 1.0] % and at every policy step to simulate temporal noise, and a
+Torque Delay [0.5, 3] ms randomized delay of up to 100 milliseconds is applied to
+Encoder Noise [-0.05, 0.05] rad
+simulate perception latency. These perturbations are critical
+XY Shift / (episode,step) [-0.05, 0.05] m
+for preparing the teacher policy to operate under imperfect
+Z Shift / episode [-0.1, 0.1] m
+Height Map and noisy conditions that the student will encounter.
+Z Shift / step [-0.02, 0.02] m
+Delay [20, 100] ms IV. SIMULATION EXPERIMENTAL RESULTS
+its input, generating these trajectories is computationally ex- A. Policy Performance
+pensive compared to teacher training. To make more efficient We evaluate the performance of the state-of-the-art blind
+use of this data and improve generalization, we introduce a bipedal locomotion controller, SaW [16], alongside three
+targeted data augmentation strategy. Rather than collecting policies trained using our proposed approach: (1) a blind
+more simulation episodes, we generate additional supervision policy trained from scratch on the same terrain distribution
+signals by duplicating existing state trajectories and varying described in the previous sections, (2) the proposed full
+the velocity commands given to the teacher at each time step. privileged teacher policy, and (3) the distilled student policy
+Thus, a single rendered depth image at a timestep results in that operates with egocentric depth inputs.
+multiple training examples. This imputation technique simu- To understand the contribution of each policy component,
+lates how the teacher would respond to different locomotion we conduct an ablation study in which each terrain is eval-
+intents in the same terrain context. uated under two difficulty levels: easy and hard, as defined
+Concretely, for each training trajectory buffer, we sample in Table I. For each policy and terrain mode, we collect 100
+random values within bounded ranges for X velocity, Y episodes and compute four key evaluation metrics: Success
+velocity, and yaw rate, drawn from: X velocity: [-0.6, 1.0] Rate, Episodes with Foot Collisions, Terminations due to
+m/s, Y velocity: [-0.6, 0.6] m/s, and Turn rate: [-0.4, 0.4] Foot Collisions, and Energy Consumption, as shown in Fig.
+rad/s. These new command values are injected into both 4. Note that for space constraint reasons, results for “easy”
+the student and teacher input states at the corresponding are aggregated across the three terrain type, while the “hard”
+command indices. The teacher and student policies are then category is broken down by terrain.
+evaluated on these modified inputs. The student is trained to In terms of Success Rate, the Privileged Teacher consis-
+minimize the KL divergence between the resulting actions tently outperforms all baselines across terrains, achieving
+under these perturbed commands. This process is repeated over 85% success even on the most difficult terrains. The
+over several epochs (e.g., 10 per batch), increasing training vast majority of failures occur during episodes that require
+diversity without additional simulation steps. high sideways or backward stepping. The robot morphology,
+To further improve robustness to sensor noise and real- particularly the conrods, makes such high steps extremely
+world imperfections, we apply standard vision augmentations difficult. It is unclear how close the Teacher’s performance
+to the student’s input depth images. These include Gaussian is to the maximum achievable on this terrain distribution
+noise injection, dropout artifacts, and random image jittering; given the robot morphology. The nonprivileged vision-based
+simulating the variability and degradation seen in real camera student policy closely matches the teacher’s performance,
+data. Together, these modifications ensure that the student notably outperforming both blind variants, especially on
+policy faithfully transfers the terrain-adaptive locomotion stair-hard and block-hard terrains. The blind policy without
+strategy learned by the teacher to a real-world deployable terrain labels struggles, particularly on complex terrains.
+form, relying solely on realistic depth-based perception with- Figure 4 also shows that the teacher and student both
+out access to privileged simulation data. have many fewer foot collisions during an episode compared
+to the blind policies. Both blind policies, especially the
+E. Domain Randomization
+baseline without terrain information, experience frequent
+To ensure robust sim-to-real transfer and to increase train- foot collisions, reflecting a lack of terrain anticipation and
+ing data diversity, we apply extensive domain randomization proactive control. We see the same trend for the percent of
+across model parameters, actuation characteristics, sensor episodes that terminate due to collisions, where the blind
+inputs, and actuation delays. A summary of the randomized policy exhibits the highest failure rates (up to 60% on
+parameters is shown in Table II. block-hard), while both the teacher and student policies
+Model parameters such as mass and link inertia are ran- demonstrate substantial robustness, maintaining termination
+domized per episode to simulate variability across different rates below 20% on all terrains.
+robots. Randomizing torque efficiency is particularly impact- In terms of energy consumption, measured in kilojoules,
+ful for transfer to extreme terrains (e.g., stepping up 0.5m), the blind policy, trained over a distribution of terrains without
+
+===== PAGE 7 =====
+Fig. 4: Bar plots comparing four policy variants: Blind Policy, Blind Policy + Terrain, Privileged Teacher, and Ours (Student)
+across four terrain types (easy, ridge-hard, stair-hard, block-hard). The plots show (1) Success Rate, defined as completing
+10-second rollouts without falling; (2) Episodes with Collision, which count any episode with foot or conrod collision events;
+(3) Terminations due to Foot Collision, measured by checking if foot or conrod collisions occurred in the final 100 steps of
+terminated episodes; and (4) Energy Consumption, reported as average cumulative joint effort in kilojoules. All metrics are
+averaged over 100 episodes for each variant of terrain with 95% confidence intervals.
+explicit terrain input, shows the highest energy cost across converges in just 20 hours using 110 million samples. In
+all terrains, peaking at over 35 kJ. This is due to the contrast, removing both components results in significantly
+policy adapting to the terrain distribution by converging to a slower training, requiring 144 hours and 900 million samples
+conservative gait strategy characterized by high step heights on average across 5 random seeds. To further isolate the
+and exaggerated motions, which anticipates unseen obstacles utility of the proposed augmentation, we include another
+and results in inefficient and energetically costly locomotion. configuration where the student is trained using the blind
+Both the student and privileged policies achieve significantly policy but with perceptual augmentation. In this case, we
+lower energy use, indicating smoother and more efficient observe that the convergence slows down to 96 hours,
+motions. This is a clear example of how visual information requiring about 600 million samples to train. This confirms
+can translate to improved efficiency of a robotic system. the importance of augmenting experience buffers and initial-
+izing from a pretrained controller to reduce training time,
+B. Training Time Ablations simulation overhead, and rendering cost.
+To evaluate the proposed training framework, we compare
+V. HARDWARE DEPLOYMENT
+training durations of the student and teacher across multiple
+We deployed our proposed system on the bipedal robot
+training configurations. Table III shows these comparisons,
+Cassie, equipped with four Intel RealSense D455 cameras
+highlighting the impact of using a pretrained blind policy and
+positioned to provide 360◦ terrain coverage. For onboard
+visual augmentation for both teacher and student training.
+perception, we integrated an NVIDIA Jetson Orin Nano
+TABLE III: Comparison of training setups with and without
+module dedicated to processing visual inputs. The cameras
+blind policy.
+are mounted on custom fixtures and calibrated by aligning
+Training Phase With Blind Policy Without Blind Policy depth images to simulated ones under identical robot poses.
+Teacher Training 152 hours (1.3 Billion) 216 hours (2.0 Billion) Each camera streams depth images at 90 FPS. These are
+Student Training 20 hours (110 Million) 144hours(900Million) post-processed using hole-filling and distance clipping filters
+Student Training 96 hours (600 Million) – before being passed to the ResNet-based vision encoder
+(No Augmentation)
+running on the Jetson. This module generates a compact
+For the teacher policy, which utilizes 120 parallel work- vision embedding at 90 Hz, capturing egocentric terrain
+ers, initializing with the pretrained blind policy leads to information around the robot in real time.
+substantially faster convergence, completing in 152 hours The resulting vision embedding is transmitted asyn-
+with 1.3 billion samples, compared to 216 hours and 2.0 chronously to the robot’s main computer, an Intel NUC,
+billion samples without it. These training durations are which performs the forward pass of the remainder of the pol-
+averaged over 10 independent runs with different random icy network. The policy uses the received vision embedding,
+seeds. The results demonstrate that the blind policy serves proprioceptive input, and control commands to compute the
+as a strong prior for exploration, improving sample efficiency final motor actions. These actions are then sent to the low-
+and accelerating convergence. level controller for execution.
+The benefits are even more pronounced during student The end-to-end latency between the vision pipeline and
+training. When leveraging both the blind policy and our policy inference, including depth streaming, embedding com-
+proposed data augmentation strategy, the student policy putation, and UDP transmission, is measured to be under 20
+
+===== PAGE 8 =====
+milliseconds. To evaluate performance in real-world scenar- [12] A. Loquercio, A. Kumar, and J. Malik, “Learning visual locomo-
+ios, we constructed a test environment using modular wooden tion with cross-modal supervision,” arXiv preprint arXiv:2211.03785,
+2022.
+blocks of varying heights and sizes, closely mimicking the
+[13] H. Duan, B. Pandit, M. S. Gadde, B. Van Marum, J. Dao,
+terrain distributions seen during simulation training (Fig. 1) C. Kim, and A. Fern, “Learning Vision-Based Bipedal Locomotion
+We tested the proposed system on the Cassie bipedal for Challenging Terrain,” in 2024 IEEE International Conference on
+Robotics and Automation (ICRA), May 2024, pp. 56–62.
+robot across a variety of structured terrains, including single
+[14] F. Chen, R. Wan, P. Liu, N. Zheng, and B. Zhou, “VMTS: Vision-
+high blocks, stairs, and randomized block configurations with Assisted Teacher-Student Reinforcement Learning for Multi-Terrain
+varying dimensions. The system successfully enabled Cassie Locomotion in Bipedal Robots,” Mar. 2025, arXiv:2503.07049 [cs]
+version: 1.
+to traverse these terrains in forward, sideways, and reverse
+[15] S. Ross, G. Gordon, and D. Bagnell, “A reduction of imitation learning
+directions. In the forward direction, the robot was able to and structured prediction to no-regret online learning,” in Proceedings
+step up onto blocks as high as 0.5 meters. Due to the robot’s of the fourteenth international conference on artificial intelligence and
+statistics, 2011, pp. 627–635.
+morphological constraints, particularly the limited range of
+[16] B. van Marum, A. Shrestha, H. Duan, P. Dugar, J. Dao, and A. Fern,
+motion and joint configuration. The maximum traversable “Revisitingrewarddesignandevaluationforrobusthumanoidstanding
+height was reduced to 0.35 meters for sideways motion and walking,” in 2024 IEEE/RSJ International Conference on Intelli-
+gent Robots and Systems (IROS). IEEE, 2024, pp. 11256–11263.
+and 0.2 meters in the reverse direction. Please refer to the
+[17] W. Yu, D. Jain, A. Escontrela, A. Iscen, P. Xu, E. Coumans, S. Ha,
+supplementary video for additional real-world deployment J. Tan, and T. Zhang, “Visual-Locomotion: Learning to Walk on
+demonstrations. Complex Terrains with Vision,” arXiv preprint arXiv:2107.07022,
+2021.
+VI. SUMMARY
+[18] P. Fankhauser, “Perceptive Locomotion for Legged Robots in
+Rough Terrain,” Doctoral Thesis, ETH Zurich, 2018, accepted:
+This work introduces a learning framework for vision-
+2018-08-24T07:58:52Z.
+based omnidirectional bipedal locomotion that addresses key [19] G. B. Margolis, T. Chen, K. Paigwar, X. Fu, D. Kim, S. Kim,
+challenges in sim-to-real transfer and the high cost of visual and P. Agrawal, “Learning to Jump from Pixels,” Oct. 2021,
+arXiv:2110.15344 [cs].
+rendering for reinforcement learning. The method combines
+[20] D. Hoeller, N. Rudin, C. Choy, A. Anandkumar, and M. Hutter,
+a robust blind controller, a teacher-student distillation ap- “Neural Scene Representation for Locomotion on Structured Terrain,”
+proach, and a novel data augmentation strategy to enable Jun. 2022, arXiv:2206.08077 [cs].
+[21] T. Miki, L. Wellhausen, R. Grandia, F. Jenelten, T. Homberger, and
+scalable and efficient training. We validated the framework in
+M. Hutter, “Elevation Mapping for Locomotion and Navigation using
+both simulation and real-world settings, demonstrating robust GPU,” Apr. 2022, arXiv:2204.12876 [cs].
+locomotion across diverse terrains. [22] A. Loquercio, A. Kumar, and J. Malik, “Learning visual locomo-
+tion with cross-modal supervision,” arXiv preprint arXiv:2211.03785,
+2022.
+REFERENCES
+[23] H. Wang, H. Luo, W. Zhang, and H. Chen, “CTS: Concurrent
+Teacher-Student Reinforcement Learning for Legged Locomotion,”
+[1] T. Miki, J. Lee, J. Hwangbo, L. Wellhausen, V. Koltun, and M. Hutter,
+IEEE Robotics and Automation Letters, vol. 9, no. 11, pp. 9191–9198,
+“Learning robust perceptive locomotion for quadrupedal robots in
+Nov. 2024.
+the wild,” Science Robotics, vol. 7, no. 62, p. eabk2822, Jan. 2022,
+[24] C. Zhang, J. Jin, J. Frey, N. Rudin, M. Mattamala, C. Cadena,
+publisher: American Association for the Advancement of Science.
+and M. Hutter, “Resilient Legged Local Navigation: Learning to
+[2] Z. Zhuang, S. Yao, and H. Zhao, “Humanoid Parkour Learning,” Sep.
+Traverse with Compromised Perception End-to-End,” in 2024 IEEE
+2024, arXiv:2406.10759 [cs].
+International Conference on Robotics and Automation (ICRA), May
+[3] X. Cheng, K. Shi, A. Agarwal, and D. Pathak, “Extreme Parkour
+2024, pp. 34–41.
+with Legged Robots,” Sep. 2023, arXiv:2309.14341 [cs].
+[25] J. Yamada, M. Rigter, J. Collins, and I. Posner, “TWIST: Teacher-
+[4] A. Agarwal, A. Kumar, J. Malik, and D. Pathak, “Legged Locomotion
+Student World Model Distillation for Efficient Sim-to-Real Transfer,”
+in Challenging Terrains using Egocentric Vision,” in Proceedings of
+Nov. 2023, arXiv:2311.03622 [cs].
+The 6th Conference on Robot Learning. PMLR, Mar. 2023, pp.
+[26] E. S. Hu, J. Springer, O. Rybkin, and D. Jayaraman, “Privileged
+403–415, iSSN: 2640-3498.
+Sensing Scaffolds Reinforcement Learning,” in Proceedings of the
+[5] I. Radosavovic, S. Kamat, T. Darrell, and J. Malik, “Learning
+7th Conference on Robot Learning (CoRL), Oct. 2023.
+Humanoid Locomotion over Challenging Terrain,” Oct. 2024,
+[27] T. Chen, J. Xu, and P. Agrawal, “A System for General In-Hand
+arXiv:2410.03654 [cs].
+Object Re-Orientation,” in Proceedings of the 5th Conference on
+[6] F. Wu, X. Nal, J. Jang, W. Zhu, Z. Gu, A. Wu, and Y. Zhao,
+Robot Learning. PMLR, Jan. 2022, pp. 297–307.
+“Learn to Teach: Sample-Efficient Privileged Learning for Humanoid
+[28] L. Pinto, M. Andrychowicz, P. Welinder, W. Zaremba, and P. Abbeel,
+Locomotion over Diverse Terrains,” Mar. 2025, arXiv:2402.06783
+“Asymmetric Actor Critic for Image-Based Robot Learning,” Oct.
+[cs].
+2017, arXiv:1710.06542 [cs].
+[7] J. Siekmann, K. Green, J. Warila, A. Fern, and J. Hurst, “Blind
+[29] D. Chen, B. Zhou, V. Koltun, and P. Kra¨henbu¨hl, “Learning by
+Bipedal Stair Traversal via Sim-to-Real Reinforcement Learning,” in
+Cheating,” in Proceedings of the Conference on Robot Learning.
+Robotics: Science and Systems XVII. Robotics: Science and Systems
+PMLR, May 2020, pp. 66–75.
+Foundation, Jul. 2021.
+[30] M. Bansal, A. Krizhevsky, and A. Ogale, “ChauffeurNet: Learning to
+[8] F. Jenelten, J. He, F. Farshidian, and M. Hutter, “DTC: Deep Tracking
+Drive by Imitating the Best and Synthesizing the Worst,” Dec. 2018,
+Control,” Science Robotics, vol. 9, no. 86, p. eadh5401, Jan. 2024,
+arXiv:1812.03079 [cs].
+arXiv:2309.15462 [cs, eess].
+[31] A. Bewley, J. Rigley, Y. Liu, J. Hawke, R. Shen, V.-D. Lam, and
+[9] J. Lee, J. Hwangbo, L. Wellhausen, V. Koltun, and M. Hutter,
+A. Kendall, “Learning to Drive from Simulation without Real World
+“Learning quadrupedal locomotion over challenging terrain,” Science
+Labels,” Dec. 2018, arXiv:1812.03823 [cs].
+robotics, vol. 5, no. 47, p. eabc5986, 2020.
+[32] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov,
+[10] H. Duan, A. Malik, M. S. Gadde, J. Dao, A. Fern, and J. Hurst, “Proximal policy optimization algorithms,” arXiv preprint
+“Learning Dynamic Bipedal Walking Across Stepping Stones,” in arXiv:1707.06347, 2017.
+2022 IEEE/RSJ International Conference on Intelligent Robots and
+[33] E. Todorov, T. Erez, and Y. Tassa, “Mujoco: A physics engine for
+Systems (IROS), Oct. 2022, pp. 6746–6752, iSSN: 2153-0866. model-based control,” in 2012 IEEE/RSJ international conference on
+[11] Z. Zhuang, Z. Fu, J. Wang, C. Atkeson, S. Schwertfeger, C. Finn, and intelligent robots and systems. IEEE, 2012, pp. 5026–5033.
+H. Zhao, “Robot Parkour Learning,” Sep. 2023, arXiv:2309.05665
+[cs].

@@ -2,11 +2,13 @@
 
 import pytest
 
+gym = pytest.importorskip("gymnasium")
 pytest.importorskip("pxr", reason="Isaac Sim Python runtime is required for config tests")
 pytest.importorskip("isaaclab")
 
 from loco_transformer.agents.loco_transformer_agent_cfg import (
     LocoTransformerAgentCfg,
+    LocoTransformerHistoryAgentCfg,
     LocoTransformerMLPAgentCfg,
 )
 from loco_transformer.rpo_loco_transformer_env_cfg import (
@@ -14,6 +16,8 @@ from loco_transformer.rpo_loco_transformer_env_cfg import (
     RPOLocoMLPEnvCfg_PLAY,
     RPOLocoTransformerEnvCfg,
     RPOLocoTransformerEnvCfg_PLAY,
+    RPOLocoTransformerHistoryEnvCfg,
+    RPOLocoTransformerHistoryEnvCfg_PLAY,
 )
 from robolab.tasks.direct.base.rpo_env_cfg import RPORewardCfg
 from robolab.tasks.direct.base.agents.rpo_agent_cfg import RPOFlatAgentCfg
@@ -56,8 +60,73 @@ def test_mlp_variant_has_exactly_the_78_dimensional_terms():
     assert agent_cfg.experiment_name == "loco_transformer_mlp"
 
 
+def test_history_variant_has_exactly_the_selected_ten_frame_terms():
+    original_cfg = RPOLocoTransformerEnvCfg()
+    history_cfg = RPOLocoTransformerHistoryEnvCfg()
+    agent_cfg = LocoTransformerHistoryAgentCfg()
+
+    historical_terms = ("base_ang_vel", "projected_gravity", "joint_pos", "joint_vel")
+    current_terms = ("velocity_commands", "actions", "height_scan")
+    for group_name in ("policy", "critic"):
+        original_group = getattr(original_cfg.observations, group_name)
+        history_group = getattr(history_cfg.observations, group_name)
+        for term_name in historical_terms:
+            assert getattr(history_group, term_name).history_length == 10
+            assert getattr(history_group, term_name).flatten_history_dim is True
+            assert getattr(original_group, term_name).history_length == 0
+        for term_name in current_terms:
+            assert getattr(history_group, term_name).history_length == 0
+
+    assert agent_cfg.policy.actor_perception_range == (546, 777)
+    assert agent_cfg.policy.critic_perception_range == (546, 777)
+    assert agent_cfg.policy.height_map_shape == (11, 21)
+    assert agent_cfg.experiment_name == "loco_transformer_history"
+    assert agent_cfg.resume is False
+
+
+def test_history_variant_preserves_original_task_configuration():
+    original_cfg = RPOLocoTransformerEnvCfg()
+    history_cfg = RPOLocoTransformerHistoryEnvCfg()
+
+    assert _reward_weights(history_cfg.rewards) == _reward_weights(original_cfg.rewards)
+    for field_name in (
+        "curriculum",
+        "size",
+        "border_width",
+        "num_rows",
+        "num_cols",
+        "horizontal_scale",
+        "vertical_scale",
+    ):
+        assert getattr(history_cfg.scene.terrain.terrain_generator, field_name) == getattr(
+            original_cfg.scene.terrain.terrain_generator, field_name
+        )
+    assert history_cfg.scene.height_scanner.update_period == original_cfg.scene.height_scanner.update_period
+    assert history_cfg.decimation == original_cfg.decimation
+    assert history_cfg.sim.dt == original_cfg.sim.dt
+
+
 @pytest.mark.parametrize(
-    "cfg_type", [RPOLocoTransformerEnvCfg_PLAY, RPOLocoMLPEnvCfg_PLAY]
+    ("task_id", "env_cfg_name"),
+    [
+        ("RPO-Loco-Transformer-History", "RPOLocoTransformerHistoryEnvCfg"),
+        ("RPO-Loco-Transformer-History-Play", "RPOLocoTransformerHistoryEnvCfg_PLAY"),
+    ],
+)
+def test_history_tasks_are_registered(task_id, env_cfg_name):
+    spec = gym.spec(task_id)
+
+    assert spec.kwargs["env_cfg_entry_point"].endswith(f":{env_cfg_name}")
+    assert spec.kwargs["rsl_rl_cfg_entry_point"].endswith(":LocoTransformerHistoryAgentCfg")
+
+
+@pytest.mark.parametrize(
+    "cfg_type",
+    [
+        RPOLocoTransformerEnvCfg_PLAY,
+        RPOLocoTransformerHistoryEnvCfg_PLAY,
+        RPOLocoMLPEnvCfg_PLAY,
+    ],
 )
 def test_play_variants_disable_all_randomization(cfg_type):
     cfg = cfg_type()

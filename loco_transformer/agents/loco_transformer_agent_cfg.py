@@ -6,10 +6,12 @@
 
 """Agent configuration for the loco_transformer task.
 
-Two agent variants are provided:
+Three agent variants are provided:
 
 - ``LocoTransformerAgentCfg`` — uses the cross-attention actor-critic,
   suitable for the height-scanner-equipped environment.
+- ``LocoTransformerHistoryAgentCfg`` — uses the same cross-attention model
+  with ten frames of the 52-D sensed robot state.
 - ``LocoTransformerMLPAgentCfg`` — legacy pure-MLP actor-critic,
   for the baseline without height-scan input (78-dim obs, 23 actions).
 """
@@ -160,6 +162,37 @@ class LocoTransformerAgentCfg(RslRlOnPolicyRunnerCfg):
         normalize_advantage_per_mini_batch=False,
         symmetry_cfg=None,
         rnd_cfg=None,
+    )
+
+
+@configclass
+class LocoTransformerHistoryAgentCfg(LocoTransformerAgentCfg):
+    """Cross-attention PPO agent for the 777-D ten-frame history task."""
+
+    experiment_name = "loco_transformer_history"
+    resume = False
+    # The 546-D non-height portion contains 52 sensed dimensions over ten
+    # frames plus the current 3-D command and 23-D previous action.
+    policy = CrossAttentionActorCriticCfg(
+        class_name="rsl_rl.modules.actor_critic_cross_attn:CrossAttentionActorCritic",
+        actor_perception_range=(546, 777),
+        critic_perception_range=(546, 777),
+        height_map_shape=(11, 21),
+        embed_dim=64,
+        num_heads=8,
+        grid_size=(4, 3),
+        proprio_hidden_dims=[128],
+        cnn_channels=[16, 32, 64],
+        cnn_kernel_size=3,
+        cnn_activation="elu",
+        actor_hidden_dims=[256, 128, 64],
+        critic_hidden_dims=[256, 128, 64],
+        activation="elu",
+        init_noise_std=1.0,
+        noise_std_type="scalar",
+        state_dependent_std=False,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
     )
 
 

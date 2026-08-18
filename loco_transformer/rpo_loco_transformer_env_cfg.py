@@ -12,6 +12,23 @@ from robolab.assets.robots.roboparty import RPO_CFG
 from .loco_transformer_env_cfg import LocoTransformerEnvCfg
 
 
+_HISTORICAL_PROPRIOCEPTIVE_TERMS = (
+    "base_ang_vel",
+    "projected_gravity",
+    "joint_pos",
+    "joint_vel",
+)
+
+
+def _configure_proprioceptive_history(cfg: LocoTransformerEnvCfg) -> None:
+    """Stack ten control-rate samples for the 52-D sensed robot state."""
+    for group in (cfg.observations.policy, cfg.observations.critic):
+        for term_name in _HISTORICAL_PROPRIOCEPTIVE_TERMS:
+            term_cfg = getattr(group, term_name)
+            term_cfg.history_length = 10
+            term_cfg.flatten_history_dim = True
+
+
 def _configure_play_cfg(cfg: LocoTransformerEnvCfg) -> None:
     """Apply deterministic playback settings shared by Transformer and MLP tasks."""
     cfg.scene.num_envs = 1
@@ -52,6 +69,35 @@ class RPOLocoTransformerEnvCfg(LocoTransformerEnvCfg):
 @configclass
 class RPOLocoTransformerEnvCfg_PLAY(RPOLocoTransformerEnvCfg):
     """Play config: single environment, no noise, no pushing, no domain rand."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_play_cfg(self)
+
+
+@configclass
+class RPOLocoTransformerHistoryEnvCfg(RPOLocoTransformerEnvCfg):
+    """Transformer task with ten frames of the 52-D sensed robot state.
+
+    Commands, previous actions, and the height scan remain single-frame terms,
+    giving the term-major observation layout::
+
+        [ang_vel(3x10), gravity(3x10), command(3), joint_pos(23x10),
+         joint_vel(23x10), previous_action(23), height_scan(231)]
+
+    The policy and critic observations are both 777-dimensional.  Actor
+    histories retain the policy group's observation corruption while critic
+    histories remain noise-free.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_proprioceptive_history(self)
+
+
+@configclass
+class RPOLocoTransformerHistoryEnvCfg_PLAY(RPOLocoTransformerHistoryEnvCfg):
+    """Deterministic playback configuration for the history task."""
 
     def __post_init__(self):
         super().__post_init__()

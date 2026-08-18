@@ -59,3 +59,31 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerAgentCfg",
     },
 )
+
+gym.register(
+    id="RPO-Loco-Transformer-History",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryAgentCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RPO-Loco-Transformer-History-Play",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryEnvCfg_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryAgentCfg"
+        ),
+    },
+)
