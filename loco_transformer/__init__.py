@@ -87,3 +87,31 @@ gym.register(
         ),
     },
 )
+
+gym.register(
+    id="RPO-Loco-Transformer-History-Rough",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryRoughEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryRoughAgentCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RPO-Loco-Transformer-History-Rough-Play",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryRoughEnvCfg_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryRoughAgentCfg"
+        ),
+    },
+)

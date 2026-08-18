@@ -23,6 +23,12 @@ from .observations import (
 # -- Isaac Lab built-in observation functions --
 from isaaclab.envs.mdp.observations import height_scan  # noqa: F401
 
+# -- Curriculum functions --
+from .curriculums import terrain_levels_vel
+
+# -- History-Rough symmetry callback --
+from .symmetry import compute_symmetric_states
+
 # -- Custom reward functions (29 terms, 1:1 from RPO-Flat) --
 from .rewards import (
     # task / tracking

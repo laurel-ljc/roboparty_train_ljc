@@ -32,6 +32,9 @@ HEIGHT_SCAN_RESOLUTION = 0.1
 CURRENT_OBSERVATION_DIM = 309
 HISTORY_OBSERVATION_DIM = 777
 PROPRIOCEPTIVE_HISTORY_LENGTH = 10
+CHASE_CAMERA_BACK_M = 4.0
+CHASE_CAMERA_UP_M = 1.6
+CHASE_CAMERA_LOOK_AHEAD_M = 0.5
 
 # MuJoCo stores the joints in the depth-first URDF order below.  Isaac Sim's
 # articulation/action order is breadth-first; this is the same verified mapping
@@ -230,6 +233,38 @@ def _projected_gravity(data: mujoco.MjData) -> np.ndarray:
     return rotation.reshape(3, 3).T @ np.asarray([0.0, 0.0, -1.0])
 
 
+def _update_chase_camera(
+    camera: mujoco.MjvCamera,
+    data: mujoco.MjData,
+    body_id: int,
+) -> None:
+    """Keep a level third-person camera behind and above the robot."""
+    body_pos = np.asarray(data.xpos[body_id], dtype=np.float64)
+    body_rotation = np.asarray(data.xmat[body_id], dtype=np.float64).reshape(3, 3)
+    forward = body_rotation[:, 0].copy()
+    forward[2] = 0.0
+    forward_norm = float(np.linalg.norm(forward))
+    if forward_norm < 1.0e-6:
+        forward[:] = (1.0, 0.0, 0.0)
+    else:
+        forward /= forward_norm
+
+    eye = body_pos - CHASE_CAMERA_BACK_M * forward
+    eye[2] += CHASE_CAMERA_UP_M
+    lookat = body_pos + CHASE_CAMERA_LOOK_AHEAD_M * forward
+    view_direction = lookat - eye
+    distance = float(np.linalg.norm(view_direction))
+    view_direction /= max(distance, 1.0e-6)
+
+    camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+    camera.fixedcamid = -1
+    camera.trackbodyid = -1
+    camera.lookat[:] = lookat
+    camera.distance = distance
+    camera.azimuth = float(np.degrees(np.arctan2(view_direction[1], view_direction[0])))
+    camera.elevation = float(np.degrees(np.arcsin(np.clip(view_direction[2], -1.0, 1.0))))
+
+
 def _height_scan_offsets() -> np.ndarray:
     rows, columns = HEIGHT_SCAN_SHAPE
     x = (np.arange(columns) - (columns - 1) / 2.0) * HEIGHT_SCAN_RESOLUTION
@@ -375,6 +410,9 @@ def run(args: argparse.Namespace) -> None:
     torso_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
     if torso_body_id < 0:
         raise ValueError("MuJoCo model is missing required body: torso_link")
+    base_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    if base_body_id < 0:
+        raise ValueError("MuJoCo model is missing required body: base_link")
     _reset_robot(model, data, qpos_addresses)
 
     policy = torch.jit.load(str(args.load_model), map_location="cpu")
@@ -399,11 +437,7 @@ def run(args: argparse.Namespace) -> None:
 
     with mujoco.viewer.launch_passive(model, data, key_callback=keyboard.on_key) as viewer:
         with viewer.lock():
-            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-            viewer.cam.trackbodyid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
-            viewer.cam.distance = 4.0
-            viewer.cam.azimuth = 135.0
-            viewer.cam.elevation = -20.0
+            _update_chase_camera(viewer.cam, data, base_body_id)
 
         while viewer.is_running():
             wall_step_start = time.perf_counter()
@@ -438,6 +472,8 @@ def run(args: argparse.Namespace) -> None:
                 data.ctrl[:] = np.clip(torque, -EFFORT_LIMIT, EFFORT_LIMIT)
                 mujoco.mj_step(model, data)
 
+            with viewer.lock():
+                _update_chase_camera(viewer.cam, data, base_body_id)
             viewer.sync()
             if args.duration > 0.0 and data.time - start_sim_time >= args.duration:
                 break

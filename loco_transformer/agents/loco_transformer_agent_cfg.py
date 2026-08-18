@@ -12,6 +12,8 @@ Three agent variants are provided:
   suitable for the height-scanner-equipped environment.
 - ``LocoTransformerHistoryAgentCfg`` — uses the same cross-attention model
   with ten frames of the 52-D sensed robot state.
+- ``LocoTransformerHistoryRoughAgentCfg`` — keeps that model and separates
+  mixed-terrain curriculum runs into their own experiment directory.
 - ``LocoTransformerMLPAgentCfg`` — legacy pure-MLP actor-critic,
   for the baseline without height-scan input (78-dim obs, 23 actions).
 """
@@ -21,7 +23,10 @@ from isaaclab_rl.rsl_rl import (
     RslRlOnPolicyRunnerCfg,
     RslRlPpoActorCriticCfg,
     RslRlPpoAlgorithmCfg,
+    RslRlSymmetryCfg,
 )
+
+from ..mdp.symmetry import compute_symmetric_states
 
 
 @configclass
@@ -193,6 +198,37 @@ class LocoTransformerHistoryAgentCfg(LocoTransformerAgentCfg):
         state_dependent_std=False,
         actor_obs_normalization=False,
         critic_obs_normalization=False,
+    )
+
+
+@configclass
+class LocoTransformerHistoryRoughAgentCfg(LocoTransformerHistoryAgentCfg):
+    """PPO runner for the 777-D mixed-terrain curriculum task."""
+
+    experiment_name = "loco_transformer_history_rough"
+    resume = False
+    algorithm = RslRlPpoAlgorithmCfg(
+        class_name="rsl_rl.algorithms.ppo:PPO",
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+        normalize_advantage_per_mini_batch=False,
+        symmetry_cfg=RslRlSymmetryCfg(
+            use_data_augmentation=True,
+            use_mirror_loss=True,
+            mirror_loss_coeff=0.2,
+            data_augmentation_func=compute_symmetric_states,
+        ),
+        rnd_cfg=None,
     )
 
 

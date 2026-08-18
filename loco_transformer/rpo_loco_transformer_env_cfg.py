@@ -6,10 +6,15 @@
 
 """RPO-specific environment configuration for the loco_transformer task."""
 
+import copy
+
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.utils import configclass
 
 from robolab.assets.robots.roboparty import RPO_CFG
+from . import mdp
 from .loco_transformer_env_cfg import LocoTransformerEnvCfg
+from .terrain_generator_cfg import LOCO_HISTORY_ROUGH_TERRAINS_CFG, TERRAIN_SEED
 
 
 _HISTORICAL_PROPRIOCEPTIVE_TERMS = (
@@ -102,6 +107,46 @@ class RPOLocoTransformerHistoryEnvCfg_PLAY(RPOLocoTransformerHistoryEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         _configure_play_cfg(self)
+
+
+@configclass
+class TerrainCurriculumCfg:
+    """Distance-based terrain-level curriculum used by History-Rough."""
+
+    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+
+
+@configclass
+class RPOLocoTransformerHistoryRoughEnvCfg(RPOLocoTransformerHistoryEnvCfg):
+    """Ten-frame history task on the mixed rough-terrain curriculum."""
+
+    curriculum: TerrainCurriculumCfg = TerrainCurriculumCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.terrain.terrain_generator = copy.deepcopy(LOCO_HISTORY_ROUGH_TERRAINS_CFG)
+        # TerrainImporter samples the inclusive range [0, max_init_level].
+        self.scene.terrain.max_init_terrain_level = 2
+        # Rough height fields and stairs produce substantially more contact patches.
+        self.sim.physx.gpu_collision_stack_size = 2**29
+
+
+@configclass
+class RPOLocoTransformerHistoryRoughEnvCfg_PLAY(RPOLocoTransformerHistoryRoughEnvCfg):
+    """Deterministic highest-difficulty playback config for History-Rough."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_play_cfg(self)
+
+        self.curriculum.terrain_levels = None
+        terrain_cfg = self.scene.terrain.terrain_generator
+        terrain_cfg.seed = TERRAIN_SEED
+        terrain_cfg.curriculum = False
+        terrain_cfg.difficulty_range = (1.0, 1.0)
+        terrain_cfg.num_rows = 1
+        terrain_cfg.num_cols = 20
+        self.scene.terrain.max_init_terrain_level = 0
 
 
 @configclass

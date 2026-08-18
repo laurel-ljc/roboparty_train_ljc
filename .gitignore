@@ -8,3 +8,5 @@ wandb
 *.png
 *.mp4
 研究
+temp
+tests

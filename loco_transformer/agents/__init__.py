@@ -9,5 +9,7 @@
 from .loco_transformer_agent_cfg import (
     CrossAttentionActorCriticCfg,
     LocoTransformerAgentCfg,
+    LocoTransformerHistoryAgentCfg,
+    LocoTransformerHistoryRoughAgentCfg,
     LocoTransformerMLPAgentCfg,
 )
