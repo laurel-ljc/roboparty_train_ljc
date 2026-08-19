@@ -60,6 +60,14 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--resume_path",
+    "--resume-path",
+    dest="resume_path",
+    type=str,
+    default=None,
+    help="Explicit checkpoint path used with --resume; bypasses load_run/checkpoint search.",
+)
+parser.add_argument(
     "--distributed",
     action="store_true",
     default=False,
@@ -71,6 +79,13 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+
+if args_cli.resume_path is not None:
+    if not args_cli.resume:
+        parser.error("--resume_path requires --resume")
+    args_cli.resume_path = os.path.abspath(os.path.expanduser(args_cli.resume_path))
+    if not os.path.isfile(args_cli.resume_path):
+        parser.error(f"resume checkpoint does not exist: {args_cli.resume_path}")
 
 # auto-enable distributed training when launched with torchrun / torch.distributed.run
 if int(os.getenv("WORLD_SIZE", "1")) > 1:
@@ -198,6 +213,7 @@ def _resolve_log_dir(
     log_root_path: str,
     *,
     resume: bool,
+    explicit_resume_path: str | None,
     load_run: str,
     load_checkpoint: str,
     run_name: str | None,
@@ -211,7 +227,10 @@ def _resolve_log_dir(
     resume_path = None
     if resume:
         if global_rank == 0:
-            resume_path = get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
+            if explicit_resume_path is not None:
+                resume_path = explicit_resume_path
+            else:
+                resume_path = get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
         if distributed:
             resume_path = _broadcast_resume_path(resume_path, global_rank)
         print(f"[INFO] Resuming weights from checkpoint: {resume_path}")
@@ -285,6 +304,7 @@ def main():
     log_dir, resume_path = _resolve_log_dir(
         log_root_path,
         resume=should_resume,
+        explicit_resume_path=args_cli.resume_path,
         load_run=agent_cfg.load_run,
         load_checkpoint=agent_cfg.load_checkpoint,
         run_name=agent_cfg.run_name or None,
