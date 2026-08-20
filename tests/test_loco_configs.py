@@ -38,6 +38,10 @@ from loco_transformer.terrain_generator_cfg import (
 )
 from robolab.tasks.direct.base.rpo_env_cfg import RPORewardCfg
 from robolab.tasks.direct.base.agents.rpo_agent_cfg import RPOFlatAgentCfg
+from rsl_rl.rsl_rl.modules.actor_critic_cross_attn import CrossAttentionActorCritic
+
+
+HEIGHT_MAP_SHAPE = (11, 21)
 
 
 def _reward_weights(rewards_cfg):
@@ -61,10 +65,97 @@ def test_transformer_observation_layout_and_sensor_periods():
     assert env_cfg.observations.policy.height_scan is not None
     assert env_cfg.observations.critic.height_scan is not None
     assert env_cfg.scene.height_scanner is not None
+    assert env_cfg.scene.height_scanner.ray_alignment == "yaw"
+    assert env_cfg.scene.height_scanner.pattern_cfg.ordering == "xy"
+    assert env_cfg.scene.height_scanner.pattern_cfg.resolution == pytest.approx(0.1)
+    assert env_cfg.scene.height_scanner.pattern_cfg.size == (2.0, 1.0)
     assert env_cfg.scene.contact_forces.update_period == pytest.approx(0.005)
     assert env_cfg.scene.height_scanner.update_period == pytest.approx(0.02)
     assert env_cfg.scene.left_feet_scanner.update_period == pytest.approx(0.02)
     assert env_cfg.scene.right_feet_scanner.update_period == pytest.approx(0.02)
+
+
+def _height_scanner_ray_starts():
+    """Generate rays with the exact GridPatternCfg used by the current task."""
+    pattern_cfg = RPOLocoTransformerEnvCfg().scene.height_scanner.pattern_cfg
+    starts, _ = pattern_cfg.func(pattern_cfg, "cpu")
+    return starts
+
+
+def _policy_height_map(height_scan):
+    """Exercise the current policy's real ``view(-1, 11, 21)`` path."""
+    policy_shape = SimpleNamespace(H=HEIGHT_MAP_SHAPE[0], W=HEIGHT_MAP_SHAPE[1])
+    _, height_map = CrossAttentionActorCritic._split_flat_obs(
+        policy_shape, height_scan, (0, height_scan.shape[-1])
+    )
+    return height_map
+
+
+def _isolated_platform_map(x, y):
+    starts = _height_scanner_ray_starts()
+    distance = (starts[:, 0] - x).abs() + (starts[:, 1] - y).abs()
+    ray_index = int(distance.argmin())
+    assert distance[ray_index] < 1.0e-5, f"({x}, {y}) is not on the configured scan grid"
+
+    # Isaac Lab height_scan = sensor_z - hit_z - offset.  A raised platform
+    # therefore appears below the flat-ground baseline in observation value.
+    height_scan = torch.zeros(1, starts.shape[0])
+    height_scan[0, ray_index] = -1.0
+    return _policy_height_map(height_scan), ray_index
+
+
+def test_height_map_reshape_has_y_rows_and_x_columns():
+    """Row 0 is right; last row left; column 0 back; last column front."""
+    starts = _height_scanner_ray_starts().view(*HEIGHT_MAP_SHAPE, 3)
+
+    assert tuple(starts.shape) == (11, 21, 3)
+    assert torch.allclose(starts[:, :, 0], starts[0:1, :, 0].expand(11, -1))
+    assert torch.allclose(starts[:, :, 1], starts[:, 0:1, 1].expand(-1, 21))
+    assert starts[0, 0, 1].item() == pytest.approx(-0.5)  # first row: right
+    assert starts[-1, 0, 1].item() == pytest.approx(+0.5)  # last row: left
+    assert starts[0, 0, 0].item() == pytest.approx(-1.0)  # first column: back
+    assert starts[0, -1, 0].item() == pytest.approx(+1.0)  # last column: front
+
+
+@pytest.mark.parametrize(
+    ("name", "x", "y", "expected_row", "expected_column"),
+    [
+        ("front", +0.6, 0.0, 5, 16),
+        ("back", -0.6, 0.0, 5, 4),
+        ("left", 0.0, +0.3, 8, 10),
+        ("right", 0.0, -0.3, 2, 10),
+        ("front_left", +0.6, +0.3, 8, 16),
+    ],
+)
+def test_isolated_platform_keeps_direction_after_policy_reshape(
+    name, x, y, expected_row, expected_column
+):
+    height_map, ray_index = _isolated_platform_map(x, y)
+    nonzero = torch.nonzero(height_map[0], as_tuple=False)
+
+    assert ray_index == expected_row * HEIGHT_MAP_SHAPE[1] + expected_column, name
+    assert nonzero.tolist() == [[expected_row, expected_column]], name
+    assert height_map[0, expected_row, expected_column].item() == pytest.approx(-1.0)
+
+
+@pytest.mark.parametrize("yaw_degrees", [0.0, 37.0, 90.0, -123.0])
+def test_yaw_alignment_keeps_front_left_in_the_same_robot_relative_cell(yaw_degrees):
+    """Yaw changes the obstacle's world coordinates, not its policy-map cell."""
+    starts = _height_scanner_ray_starts()
+    local_target = torch.tensor([+0.6, +0.3])
+    yaw = torch.deg2rad(torch.tensor(yaw_degrees))
+    rotation = torch.tensor(
+        [[torch.cos(yaw), -torch.sin(yaw)], [torch.sin(yaw), torch.cos(yaw)]]
+    )
+
+    world_starts = starts[:, :2] @ rotation.T
+    world_target = local_target @ rotation.T
+    hit_index = int(torch.linalg.vector_norm(world_starts - world_target, dim=1).argmin())
+
+    height_scan = torch.zeros(1, starts.shape[0])
+    height_scan[0, hit_index] = -1.0
+    height_map = _policy_height_map(height_scan)
+    assert torch.nonzero(height_map[0], as_tuple=False).tolist() == [[8, 16]]
 
 
 def test_mlp_variant_has_exactly_the_78_dimensional_terms():
@@ -234,13 +325,19 @@ def test_play_variants_disable_all_randomization(cfg_type):
         "randomize_rigid_body_com",
         "scale_actuator_gains",
         "scale_joint_parameters",
-        "reset_base",
-        "reset_robot_joints",
         "push_robot",
     )
 
     assert all(getattr(cfg.events, name) is None for name in disabled_events)
+    assert cfg.events.reset_base.params["pose_range"] == {}
+    assert cfg.events.reset_base.params["velocity_range"] == {}
+    assert cfg.events.reset_robot_joints.params["position_range"] == (1.0, 1.0)
+    assert cfg.events.reset_robot_joints.params["velocity_range"] == (0.0, 0.0)
     assert cfg.observations.policy.enable_corruption is False
+    assert cfg.commands.base_velocity.debug_vis is False
+    assert cfg.commands.base_velocity.ranges.lin_vel_x == (0.0, 0.0)
+    assert cfg.viewer.origin_type == "asset_root"
+    assert cfg.viewer.asset_name == "robot"
 
 
 def test_reward_names_weights_contacts_and_terminations_match_rpo_flat():
