@@ -10,3 +10,8 @@ wandb
 研究
 temp
 tests
+.codex_tmp
+!tests/
+tests/*
+!tests/test_loco_configs.py
+!tests/test_checkpoint_utils.py

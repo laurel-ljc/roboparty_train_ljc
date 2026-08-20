@@ -40,11 +40,22 @@ def _configure_play_cfg(cfg: LocoTransformerEnvCfg) -> None:
     cfg.scene.env_spacing = 2.5
     cfg.episode_length_s = 40.0
 
-    cfg.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+    # Start stationary.  The play script writes keyboard commands directly into
+    # the command buffer after the environment has been created.
+    cfg.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
     cfg.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
     cfg.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+    cfg.commands.base_velocity.debug_vis = False
 
     cfg.observations.policy.enable_corruption = False
+
+    # Generated terrain origins are not necessarily at the world origin.  Keep
+    # the reset terms so reset_root_state_uniform adds scene.env_origins, but
+    # remove their random perturbations for deterministic playback.
+    cfg.events.reset_base.params["pose_range"] = {}
+    cfg.events.reset_base.params["velocity_range"] = {}
+    cfg.events.reset_robot_joints.params["position_range"] = (1.0, 1.0)
+    cfg.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
 
     cfg.events.push_robot = None
     cfg.events.physics_material = None
@@ -53,8 +64,14 @@ def _configure_play_cfg(cfg: LocoTransformerEnvCfg) -> None:
     cfg.events.randomize_rigid_body_com = None
     cfg.events.scale_actuator_gains = None
     cfg.events.scale_joint_parameters = None
-    cfg.events.reset_base = None
-    cfg.events.reset_robot_joints = None
+
+    # Keep the robot framed even when its generated-terrain origin is far from
+    # (0, 0), and follow it while it walks.
+    cfg.viewer.origin_type = "asset_root"
+    cfg.viewer.asset_name = "robot"
+    cfg.viewer.env_index = 0
+    cfg.viewer.eye = (3.0, 3.0, 2.0)
+    cfg.viewer.lookat = (0.0, 0.0, 0.5)
 
 
 @configclass

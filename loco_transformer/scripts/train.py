@@ -46,6 +46,7 @@ from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
+import checkpoint_utils  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
@@ -59,14 +60,7 @@ parser.add_argument(
 )
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
-parser.add_argument(
-    "--resume_path",
-    "--resume-path",
-    dest="resume_path",
-    type=str,
-    default=None,
-    help="Explicit checkpoint path used with --resume; bypasses load_run/checkpoint search.",
-)
+checkpoint_utils.add_finetune_args(parser)
 parser.add_argument(
     "--distributed",
     action="store_true",
@@ -79,13 +73,7 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
-
-if args_cli.resume_path is not None:
-    if not args_cli.resume:
-        parser.error("--resume_path requires --resume")
-    args_cli.resume_path = os.path.abspath(os.path.expanduser(args_cli.resume_path))
-    if not os.path.isfile(args_cli.resume_path):
-        parser.error(f"resume checkpoint does not exist: {args_cli.resume_path}")
+checkpoint_utils.validate_finetune_args(args_cli, parser)
 
 # auto-enable distributed training when launched with torchrun / torch.distributed.run
 if int(os.getenv("WORLD_SIZE", "1")) > 1:
@@ -127,7 +115,6 @@ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
 """Rest everything follows."""
 
 import logging
-import re
 from datetime import datetime
 
 import torch
@@ -160,27 +147,6 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 
-def get_resume_checkpoint_path(log_path: str, run_dir: str, checkpoint: str) -> str:
-    """Find the latest checkpoint, skipping empty run directories.
-
-    Runs are ordered by last-modified time (newest first), matching Isaac Lab ``get_checkpoint_path(sort_alpha=False)``.
-    """
-    runs = [
-        os.path.join(log_path, run.name)
-        for run in os.scandir(log_path)
-        if run.is_dir() and re.match(run_dir, run.name)
-    ]
-    if not runs:
-        raise ValueError(f"No runs present in the directory: '{log_path}' match: '{run_dir}'.")
-    runs = sorted(runs, key=os.path.getmtime)
-    for run_path in reversed(runs):
-        model_checkpoints = [f for f in os.listdir(run_path) if re.match(checkpoint, f)]
-        if model_checkpoints:
-            model_checkpoints.sort(key=lambda m: f"{m:0>15}")
-            return os.path.join(run_path, model_checkpoints[-1])
-    raise ValueError(f"No checkpoints in the directory: '{log_path}' match '{checkpoint}'.")
-
-
 def _init_process_group_if_needed() -> None:
     """Initialize torch distributed once when launched via torchrun."""
     world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -198,14 +164,14 @@ def _broadcast_log_run_name(log_run_name: str, global_rank: int) -> str:
     return payload[0]
 
 
-def _broadcast_resume_path(resume_path: str | None, global_rank: int) -> str:
-    """Broadcast the resume checkpoint path from rank 0 to every distributed worker."""
+def _broadcast_checkpoint_path(checkpoint_path: str | None, global_rank: int) -> str:
+    """Broadcast a checkpoint path from rank 0 to every distributed worker."""
     _init_process_group_if_needed()
-    payload = [resume_path if global_rank == 0 else ""]
+    payload = [checkpoint_path if global_rank == 0 else ""]
     torch.distributed.broadcast_object_list(payload, src=0)
     path = payload[0]
     if not path:
-        raise ValueError("Rank 0 failed to resolve resume checkpoint path.")
+        raise ValueError("Rank 0 failed to resolve the checkpoint path.")
     return path
 
 
@@ -213,7 +179,6 @@ def _resolve_log_dir(
     log_root_path: str,
     *,
     resume: bool,
-    explicit_resume_path: str | None,
     load_run: str,
     load_checkpoint: str,
     run_name: str | None,
@@ -224,16 +189,13 @@ def _resolve_log_dir(
     os.makedirs(log_root_path, exist_ok=True)
 
     # Resolve checkpoint from prior runs before creating a new log directory (Isaac Lab behavior).
-    resume_path = None
+    checkpoint_path = None
     if resume:
         if global_rank == 0:
-            if explicit_resume_path is not None:
-                resume_path = explicit_resume_path
-            else:
-                resume_path = get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
+            checkpoint_path = checkpoint_utils.get_resume_checkpoint_path(log_root_path, load_run, load_checkpoint)
         if distributed:
-            resume_path = _broadcast_resume_path(resume_path, global_rank)
-        print(f"[INFO] Resuming weights from checkpoint: {resume_path}")
+            checkpoint_path = _broadcast_checkpoint_path(checkpoint_path, global_rank)
+        print(f"[INFO] Resuming weights from checkpoint: {checkpoint_path}")
 
     log_run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if run_name:
@@ -246,7 +208,7 @@ def _resolve_log_dir(
     os.makedirs(log_dir, exist_ok=True)
     if resume:
         print(f"[INFO] Logging new run to directory: {log_dir}")
-    return log_dir, resume_path
+    return log_dir, checkpoint_path
 
 
 def main():
@@ -259,6 +221,8 @@ def main():
 
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    if args_cli.finetune_path is not None:
+        checkpoint_utils.validate_finetune_runner(agent_cfg.class_name)
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.scene.env_spacing = 2.5
     agent_cfg.max_iterations = (
@@ -294,6 +258,9 @@ def main():
 
     # AppLauncher only sets global_rank when distributed=True
     global_rank = getattr(app_launcher, "global_rank", 0)
+    finetune_checkpoint = args_cli.finetune_path
+    if args_cli.distributed and finetune_checkpoint is not None:
+        finetune_checkpoint = _broadcast_checkpoint_path(finetune_checkpoint, global_rank)
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -301,16 +268,18 @@ def main():
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
 
     should_resume = agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation"
-    log_dir, resume_path = _resolve_log_dir(
+    log_dir, checkpoint_path = _resolve_log_dir(
         log_root_path,
         resume=should_resume,
-        explicit_resume_path=args_cli.resume_path,
         load_run=agent_cfg.load_run,
         load_checkpoint=agent_cfg.load_checkpoint,
         run_name=agent_cfg.run_name or None,
         distributed=args_cli.distributed,
         global_rank=global_rank,
     )
+    if finetune_checkpoint is not None:
+        print(f"[INFO] Finetuning weights from checkpoint: {finetune_checkpoint}")
+        print(f"[INFO] Logging new finetune run to directory: {log_dir}")
 
     # set the IO descriptors output directory if requested
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
@@ -357,10 +326,27 @@ def main():
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        print(f"[INFO]: Loading model checkpoint from: {resume_path}")
-        # load previously trained model
-        runner.load(resume_path, map_location=agent_cfg.device)
+    if finetune_checkpoint is not None:
+        print(f"[INFO]: Loading model weights for finetuning from: {finetune_checkpoint}")
+        snapshot_path = None
+        if not args_cli.distributed or global_rank == 0:
+            snapshot_path = os.path.join(log_dir, "model_loaded.pt")
+        source_iteration = checkpoint_utils.load_checkpoint_for_training(
+            runner,
+            finetune_checkpoint,
+            mode="finetune",
+            map_location=agent_cfg.device,
+            snapshot_path=snapshot_path,
+        )
+        print(f"[INFO] Finetune source iteration: {source_iteration}; starting target task from iteration 0.")
+    elif agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+        print(f"[INFO]: Loading model checkpoint from: {checkpoint_path}")
+        checkpoint_utils.load_checkpoint_for_training(
+            runner,
+            checkpoint_path,
+            mode="resume",
+            map_location=agent_cfg.device,
+        )
 
     # dump the configuration into log-directory (rank 0 only in distributed mode)
     if not args_cli.distributed or global_rank == 0:

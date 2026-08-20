@@ -195,6 +195,9 @@ def main():
     command_cfg.rel_standing_envs = 0.0
     # Prevent periodic random command resampling from overwriting keyboard input.
     command_cfg.resampling_time_range = (1.0e9, 1.0e9)
+    # Avoid remote arrow-marker assets and visual ambiguity: keyboard commands
+    # remain available, but desired/current velocity arrows are not spawned.
+    command_cfg.debug_vis = False
     command_cfg.ranges.lin_vel_x = (0.0, 0.0)
     command_cfg.ranges.lin_vel_y = (0.0, 0.0)
     command_cfg.ranges.ang_vel_z = (0.0, 0.0)
@@ -204,10 +207,15 @@ def main():
         env_cfg.scene.terrain.terrain_type = "plane"
 
     if env_cfg.scene.terrain.terrain_generator is not None:
-        env_cfg.scene.terrain.terrain_generator.num_rows = 5
-        env_cfg.scene.terrain.terrain_generator.num_cols = 5
-        env_cfg.scene.terrain.terrain_generator.curriculum = False
-        env_cfg.scene.terrain.terrain_generator.difficulty_range = (1.0, 1.0)
+        terrain_generator = env_cfg.scene.terrain.terrain_generator
+        # Registered Play tasks may deliberately choose a particular grid
+        # shape (History-Rough-Play uses one row and twenty terrain types).
+        # Only compact a training task when it is launched through play.py.
+        if not args_cli.task.endswith("-Play"):
+            terrain_generator.num_rows = 5
+            terrain_generator.num_cols = 5
+        terrain_generator.curriculum = False
+        terrain_generator.difficulty_range = (1.0, 1.0)
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
