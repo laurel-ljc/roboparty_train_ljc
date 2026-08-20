@@ -404,6 +404,16 @@ def _detect_policy_observation_dim(policy: torch.jit.ScriptModule) -> int:
 
 def run(args: argparse.Namespace) -> None:
     model = mujoco.MjModel.from_xml_path(str(args.model))
+    run_model(model, args)
+
+
+def run_model(model: mujoco.MjModel, args: argparse.Namespace) -> None:
+    """Run playback with an already-compiled model.
+
+    Keeping model construction separate lets specialized front-ends, such as
+    ``sim2sim_rough.py``, add procedural MuJoCo terrain while sharing exactly
+    the same policy, observation, controller, and viewer implementation.
+    """
     model.opt.timestep = args.dt
     data = mujoco.MjData(model)
     qpos_addresses, dof_addresses = _joint_addresses(model)
