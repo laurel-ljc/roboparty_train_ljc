@@ -331,6 +331,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--decimation", type=int, default=20, help="Physics steps per 50 Hz policy step.")
     parser.add_argument("--lin-vel-step", type=float, default=0.05, help="Keyboard linear-velocity increment.")
     parser.add_argument("--ang-vel-step", type=float, default=0.05, help="Keyboard angular-velocity increment.")
+    parser.add_argument(
+        "--gamepad",
+        action="store_true",
+        help="Add real-time Xbox/XInput commands to the keyboard command.",
+    )
+    parser.add_argument(
+        "--gamepad-index",
+        type=int,
+        choices=range(4),
+        default=0,
+        help="XInput controller index used with --gamepad (default: 0).",
+    )
     parser.add_argument("--no-real-time", action="store_true", help="Disable wall-clock pacing.")
     args = parser.parse_args()
 

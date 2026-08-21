@@ -12,6 +12,7 @@ ten-frame proprioceptive-history observation.  Both variants use the current
 from __future__ import annotations
 
 import argparse
+import ctypes
 import threading
 import time
 from pathlib import Path
@@ -35,6 +36,13 @@ PROPRIOCEPTIVE_HISTORY_LENGTH = 10
 CHASE_CAMERA_BACK_M = 4.0
 CHASE_CAMERA_UP_M = 1.6
 CHASE_CAMERA_LOOK_AHEAD_M = 0.5
+COMMAND_LOWER_LIMITS = np.asarray([-0.6, -0.5, -1.57], dtype=np.float32)
+COMMAND_UPPER_LIMITS = np.asarray([1.0, 0.5, 1.57], dtype=np.float32)
+
+XINPUT_LEFT_THUMB_DEADZONE = 7849.0 / 32767.0
+XINPUT_TRIGGER_THRESHOLD = 30
+XINPUT_ERROR_SUCCESS = 0
+XINPUT_DLL_NAMES = ("xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll")
 
 # MuJoCo stores the joints in the depth-first URDF order below.  Isaac Sim's
 # articulation/action order is breadth-first; this is the same verified mapping
@@ -93,6 +101,107 @@ EFFORT_LIMIT = np.asarray(
 )
 
 
+class _XInputGamepad(ctypes.Structure):
+    """Native XINPUT_GAMEPAD structure."""
+
+    _fields_ = (
+        ("wButtons", ctypes.c_ushort),
+        ("bLeftTrigger", ctypes.c_ubyte),
+        ("bRightTrigger", ctypes.c_ubyte),
+        ("sThumbLX", ctypes.c_short),
+        ("sThumbLY", ctypes.c_short),
+        ("sThumbRX", ctypes.c_short),
+        ("sThumbRY", ctypes.c_short),
+    )
+
+
+class _XInputState(ctypes.Structure):
+    """Native XINPUT_STATE structure."""
+
+    _fields_ = (
+        ("dwPacketNumber", ctypes.c_ulong),
+        ("Gamepad", _XInputGamepad),
+    )
+
+
+def _normalized_thumb_axis(value: int) -> float:
+    """Normalize a signed XInput thumb value without losing -32768."""
+    divisor = 32767.0 if value >= 0 else 32768.0
+    return float(value) / divisor
+
+
+def _rescale_left_stick(left_x: int, left_y: int) -> tuple[float, float]:
+    """Apply the standard Xbox radial deadzone and rescale to unit magnitude."""
+    vector = np.asarray(
+        [_normalized_thumb_axis(left_x), _normalized_thumb_axis(left_y)],
+        dtype=np.float64,
+    )
+    magnitude = min(float(np.linalg.norm(vector)), 1.0)
+    if magnitude <= XINPUT_LEFT_THUMB_DEADZONE:
+        return 0.0, 0.0
+
+    scaled_magnitude = (magnitude - XINPUT_LEFT_THUMB_DEADZONE) / (1.0 - XINPUT_LEFT_THUMB_DEADZONE)
+    vector *= scaled_magnitude / max(float(np.linalg.norm(vector)), 1.0e-12)
+    return float(vector[0]), float(vector[1])
+
+
+def _rescale_trigger(value: int) -> float:
+    """Apply the XInput trigger threshold and rescale to [0, 1]."""
+    if value <= XINPUT_TRIGGER_THRESHOLD:
+        return 0.0
+    return (float(value) - XINPUT_TRIGGER_THRESHOLD) / (255.0 - XINPUT_TRIGGER_THRESHOLD)
+
+
+def _gamepad_velocity_command(gamepad: _XInputGamepad) -> np.ndarray:
+    """Map an Xbox state to the policy's body-frame velocity convention."""
+    stick_x, stick_y = _rescale_left_stick(gamepad.sThumbLX, gamepad.sThumbLY)
+    # Forward command has the asymmetric range used during training.  XInput's
+    # positive LX points right, while positive body-frame y points left.
+    lin_x = stick_y * (COMMAND_UPPER_LIMITS[0] if stick_y >= 0.0 else -COMMAND_LOWER_LIMITS[0])
+    lin_y = -stick_x * COMMAND_UPPER_LIMITS[1]
+    left_trigger = _rescale_trigger(gamepad.bLeftTrigger)
+    right_trigger = _rescale_trigger(gamepad.bRightTrigger)
+    ang_z = (left_trigger - right_trigger) * COMMAND_UPPER_LIMITS[2]
+    return np.asarray([lin_x, lin_y, ang_z], dtype=np.float32)
+
+
+def _combine_velocity_commands(*commands: np.ndarray) -> np.ndarray:
+    """Add command sources and clamp the result to the policy training range."""
+    if not commands:
+        return np.zeros(3, dtype=np.float32)
+    combined = np.sum(np.asarray(commands, dtype=np.float32), axis=0)
+    return np.clip(combined, COMMAND_LOWER_LIMITS, COMMAND_UPPER_LIMITS).astype(np.float32)
+
+
+def _create_xinput_poller():
+    """Load an available Windows XInput DLL and return a state polling callable."""
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        raise RuntimeError("Xbox gamepad control requires Windows XInput.")
+
+    errors = []
+    for dll_name in XINPUT_DLL_NAMES:
+        try:
+            xinput = win_dll(dll_name)
+        except OSError as error:
+            errors.append(f"{dll_name}: {error}")
+            continue
+
+        get_state = xinput.XInputGetState
+        get_state.argtypes = (ctypes.c_uint, ctypes.POINTER(_XInputState))
+        get_state.restype = ctypes.c_uint
+
+        def poll_state(index: int, get_state=get_state):
+            state = _XInputState()
+            result = int(get_state(index, ctypes.byref(state)))
+            return result, state.Gamepad
+
+        return poll_state, dll_name
+
+    details = "; ".join(errors)
+    raise RuntimeError(f"Could not load a Windows XInput DLL. {details}")
+
+
 class KeyboardCommands:
     """Thread-safe command state updated by the MuJoCo viewer callback.
 
@@ -147,6 +256,38 @@ class KeyboardCommands:
             requested = self._reset_requested
             self._reset_requested = False
             return requested
+
+
+class GamepadCommands:
+    """Poll one Xbox/XInput controller and return instantaneous velocity commands."""
+
+    def __init__(self, index: int = 0, poll_state=None) -> None:
+        if not 0 <= index <= 3:
+            raise ValueError(f"XInput gamepad index must be in [0, 3], got {index}.")
+        self.index = index
+        if poll_state is None:
+            self._poll_state, backend_name = _create_xinput_poller()
+        else:
+            self._poll_state = poll_state
+            backend_name = "injected test backend"
+        self._connected: bool | None = None
+        print(f"[Gamepad] Xbox controller {index} enabled via {backend_name}.")
+        print("  Left stick: forward/backward and strafe")
+        print("  LT/RT: turn left/right")
+
+    def snapshot(self) -> np.ndarray:
+        """Read the latest controller state; disconnected devices contribute zero."""
+        result, gamepad = self._poll_state(self.index)
+        connected = result == XINPUT_ERROR_SUCCESS
+        if connected != self._connected:
+            if connected:
+                print(f"[Gamepad] Xbox controller {self.index} connected.")
+            else:
+                print(f"[Gamepad] Xbox controller {self.index} disconnected; gamepad command is zero.")
+            self._connected = connected
+        if not connected:
+            return np.zeros(3, dtype=np.float32)
+        return _gamepad_velocity_command(gamepad)
 
 
 class ProprioceptiveState(NamedTuple):
@@ -435,6 +576,11 @@ def run_model(model: mujoco.MjModel, args: argparse.Namespace) -> None:
     )
     print(f"[MuJoCo] Detected {observation_dim}-dimensional policy observation.")
     keyboard = KeyboardCommands(args.lin_vel_step, args.ang_vel_step)
+    gamepad = (
+        GamepadCommands(getattr(args, "gamepad_index", 0))
+        if getattr(args, "gamepad", False)
+        else None
+    )
     scan_offsets = _height_scan_offsets()
     action = np.zeros(NUM_ACTIONS, dtype=np.float64)
     target_pos = DEFAULT_POS.copy()
@@ -443,6 +589,8 @@ def run_model(model: mujoco.MjModel, args: argparse.Namespace) -> None:
     print("[MuJoCo] Interactive velocity control (keys chosen to avoid viewer shortcuts):")
     print("  I/K: forward/backward     J/L: strafe left/right")
     print("  U/O: turn left/right      P: stop      R: reset robot")
+    if gamepad is not None:
+        print("  Xbox input is added to keyboard input and clamped to the training ranges.")
     print("  Close the viewer window or press Esc to exit.")
 
     with mujoco.viewer.launch_passive(model, data, key_callback=keyboard.on_key) as viewer:
@@ -459,7 +607,12 @@ def run_model(model: mujoco.MjModel, args: argparse.Namespace) -> None:
                     history.clear()
                 start_sim_time = data.time
 
-            command = keyboard.snapshot()
+            keyboard_command = keyboard.snapshot()
+            command = (
+                _combine_velocity_commands(keyboard_command, gamepad.snapshot())
+                if gamepad is not None
+                else keyboard_command
+            )
             obs = _observation(
                 model,
                 data,
@@ -507,6 +660,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--decimation", type=int, default=20, help="Physics steps per 50 Hz policy step.")
     parser.add_argument("--lin-vel-step", type=float, default=0.05, help="Keyboard linear-velocity increment.")
     parser.add_argument("--ang-vel-step", type=float, default=0.05, help="Keyboard angular-velocity increment.")
+    parser.add_argument(
+        "--gamepad",
+        action="store_true",
+        help="Add real-time Xbox/XInput commands to the keyboard command.",
+    )
+    parser.add_argument(
+        "--gamepad-index",
+        type=int,
+        choices=range(4),
+        default=0,
+        help="XInput controller index used with --gamepad (default: 0).",
+    )
     parser.add_argument("--no-real-time", action="store_true", help="Disable wall-clock pacing.")
     args = parser.parse_args()
     if args.model is None:
