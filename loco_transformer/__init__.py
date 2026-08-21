@@ -115,3 +115,45 @@ gym.register(
         ),
     },
 )
+
+gym.register(
+    id="RPO-Loco-MLP-Teacher",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoMLPTeacherEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerMLPTeacherAgentCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RPO-Loco-Transformer-History-Teacher",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryTeacherEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryTeacherAgentCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RPO-Loco-Transformer-History-Rough-Teacher",
+    entry_point=f"{__name__}.loco_transformer_env:LocoTransformerEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.rpo_loco_transformer_env_cfg:RPOLocoTransformerHistoryRoughTeacherEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.loco_transformer_agent_cfg:LocoTransformerHistoryRoughTeacherAgentCfg"
+        ),
+    },
+)

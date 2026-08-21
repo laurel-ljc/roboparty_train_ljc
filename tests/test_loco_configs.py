@@ -17,17 +17,23 @@ from loco_transformer.agents.loco_transformer_agent_cfg import (
     LocoTransformerAgentCfg,
     LocoTransformerHistoryAgentCfg,
     LocoTransformerHistoryRoughAgentCfg,
+    LocoTransformerHistoryRoughTeacherAgentCfg,
+    LocoTransformerHistoryTeacherAgentCfg,
     LocoTransformerMLPAgentCfg,
+    LocoTransformerMLPTeacherAgentCfg,
 )
 from loco_transformer.rpo_loco_transformer_env_cfg import (
     RPOLocoMLPEnvCfg,
     RPOLocoMLPEnvCfg_PLAY,
+    RPOLocoMLPTeacherEnvCfg,
     RPOLocoTransformerEnvCfg,
     RPOLocoTransformerEnvCfg_PLAY,
     RPOLocoTransformerHistoryEnvCfg,
     RPOLocoTransformerHistoryEnvCfg_PLAY,
     RPOLocoTransformerHistoryRoughEnvCfg,
     RPOLocoTransformerHistoryRoughEnvCfg_PLAY,
+    RPOLocoTransformerHistoryRoughTeacherEnvCfg,
+    RPOLocoTransformerHistoryTeacherEnvCfg,
 )
 from loco_transformer.mdp.curriculums import terrain_levels_vel
 from loco_transformer.mdp.symmetry import compute_symmetric_states
@@ -305,6 +311,88 @@ def test_history_rough_play_is_deterministic_and_highest_difficulty():
     assert terrain_cfg.seed == 42
     assert terrain_cfg.num_rows == 1
     assert cfg.scene.terrain.max_init_terrain_level == 0
+
+
+@pytest.mark.parametrize(
+    ("base_env_type", "teacher_env_type", "base_agent_type", "teacher_agent_type"),
+    [
+        (
+            RPOLocoMLPEnvCfg,
+            RPOLocoMLPTeacherEnvCfg,
+            LocoTransformerMLPAgentCfg,
+            LocoTransformerMLPTeacherAgentCfg,
+        ),
+        (
+            RPOLocoTransformerHistoryEnvCfg,
+            RPOLocoTransformerHistoryTeacherEnvCfg,
+            LocoTransformerHistoryAgentCfg,
+            LocoTransformerHistoryTeacherAgentCfg,
+        ),
+        (
+            RPOLocoTransformerHistoryRoughEnvCfg,
+            RPOLocoTransformerHistoryRoughTeacherEnvCfg,
+            LocoTransformerHistoryRoughAgentCfg,
+            LocoTransformerHistoryRoughTeacherAgentCfg,
+        ),
+    ],
+)
+def test_teacher_variants_only_disable_policy_corruption_and_change_log_directory(
+    base_env_type, teacher_env_type, base_agent_type, teacher_agent_type
+):
+    base_env = base_env_type()
+    teacher_env = teacher_env_type()
+    base_agent = base_agent_type()
+    teacher_agent = teacher_agent_type()
+
+    assert base_env.observations.policy.enable_corruption is True
+    assert teacher_env.observations.policy.enable_corruption is False
+    assert teacher_env.observations.critic.enable_corruption is False
+    retained_randomizations = (
+        "physics_material",
+        "add_base_mass",
+        "scale_link_mass",
+        "randomize_rigid_body_com",
+        "scale_actuator_gains",
+        "scale_joint_parameters",
+        "push_robot",
+    )
+    assert all(getattr(teacher_env.events, name) is not None for name in retained_randomizations)
+
+    teacher_env_dict = teacher_env.to_dict()
+    teacher_env_dict["observations"]["policy"]["enable_corruption"] = True
+    assert teacher_env_dict == base_env.to_dict()
+
+    assert teacher_agent.experiment_name.endswith("_teacher")
+    teacher_agent_dict = teacher_agent.to_dict()
+    teacher_agent_dict["experiment_name"] = base_agent.experiment_name
+    assert teacher_agent_dict == base_agent.to_dict()
+
+
+@pytest.mark.parametrize(
+    ("task_id", "env_cfg_name", "agent_cfg_name"),
+    [
+        (
+            "RPO-Loco-MLP-Teacher",
+            "RPOLocoMLPTeacherEnvCfg",
+            "LocoTransformerMLPTeacherAgentCfg",
+        ),
+        (
+            "RPO-Loco-Transformer-History-Teacher",
+            "RPOLocoTransformerHistoryTeacherEnvCfg",
+            "LocoTransformerHistoryTeacherAgentCfg",
+        ),
+        (
+            "RPO-Loco-Transformer-History-Rough-Teacher",
+            "RPOLocoTransformerHistoryRoughTeacherEnvCfg",
+            "LocoTransformerHistoryRoughTeacherAgentCfg",
+        ),
+    ],
+)
+def test_clean_teacher_tasks_are_registered(task_id, env_cfg_name, agent_cfg_name):
+    spec = gym.spec(task_id)
+
+    assert spec.kwargs["env_cfg_entry_point"].endswith(f":{env_cfg_name}")
+    assert spec.kwargs["rsl_rl_cfg_entry_point"].endswith(f":{agent_cfg_name}")
 
 
 @pytest.mark.parametrize(

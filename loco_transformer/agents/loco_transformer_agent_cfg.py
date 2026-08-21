@@ -233,6 +233,22 @@ class LocoTransformerHistoryRoughAgentCfg(LocoTransformerHistoryAgentCfg):
 
 
 @configclass
+class LocoTransformerHistoryTeacherAgentCfg(LocoTransformerHistoryAgentCfg):
+    """Clean-observation teacher runner for the ten-frame history task."""
+
+    experiment_name = "loco_transformer_history_teacher"
+    resume = False
+
+
+@configclass
+class LocoTransformerHistoryRoughTeacherAgentCfg(LocoTransformerHistoryRoughAgentCfg):
+    """Clean-observation teacher runner for the rough-terrain history task."""
+
+    experiment_name = "loco_transformer_history_rough_teacher"
+    resume = False
+
+
+@configclass
 class LocoTransformerMLPAgentCfg(RslRlOnPolicyRunnerCfg):
     """Legacy pure-MLP PPO agent for the loco_transformer task (78-dim obs).
 
@@ -285,3 +301,11 @@ class LocoTransformerMLPAgentCfg(RslRlOnPolicyRunnerCfg):
         symmetry_cfg=None,
         rnd_cfg=None,
     )
+
+
+@configclass
+class LocoTransformerMLPTeacherAgentCfg(LocoTransformerMLPAgentCfg):
+    """Clean-observation teacher runner for the proprioceptive MLP task."""
+
+    experiment_name = "loco_transformer_mlp_teacher"
+    resume = False

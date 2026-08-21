@@ -11,5 +11,8 @@ from .loco_transformer_agent_cfg import (
     LocoTransformerAgentCfg,
     LocoTransformerHistoryAgentCfg,
     LocoTransformerHistoryRoughAgentCfg,
+    LocoTransformerHistoryRoughTeacherAgentCfg,
+    LocoTransformerHistoryTeacherAgentCfg,
     LocoTransformerMLPAgentCfg,
+    LocoTransformerMLPTeacherAgentCfg,
 )

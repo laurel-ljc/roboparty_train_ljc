@@ -34,6 +34,11 @@ def _configure_proprioceptive_history(cfg: LocoTransformerEnvCfg) -> None:
             term_cfg.flatten_history_dim = True
 
 
+def _configure_clean_teacher_cfg(cfg: LocoTransformerEnvCfg) -> None:
+    """Disable observation corruption without changing domain randomization."""
+    cfg.observations.policy.enable_corruption = False
+
+
 def _configure_play_cfg(cfg: LocoTransformerEnvCfg) -> None:
     """Apply deterministic playback settings shared by Transformer and MLP tasks."""
     cfg.scene.num_envs = 1
@@ -184,3 +189,30 @@ class RPOLocoMLPEnvCfg_PLAY(RPOLocoMLPEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         _configure_play_cfg(self)
+
+
+@configclass
+class RPOLocoMLPTeacherEnvCfg(RPOLocoMLPEnvCfg):
+    """Clean-observation MLP teacher with the original training randomization."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_clean_teacher_cfg(self)
+
+
+@configclass
+class RPOLocoTransformerHistoryTeacherEnvCfg(RPOLocoTransformerHistoryEnvCfg):
+    """Clean-observation history teacher with the original training randomization."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_clean_teacher_cfg(self)
+
+
+@configclass
+class RPOLocoTransformerHistoryRoughTeacherEnvCfg(RPOLocoTransformerHistoryRoughEnvCfg):
+    """Clean-observation rough-terrain teacher retaining all domain randomization."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        _configure_clean_teacher_cfg(self)
